@@ -1,0 +1,23 @@
+# MD Run Parameters
+dt: 0.0075        # Timestep in ps
+nx: 30            # Grid points in x
+ny: 30            # Grid points in y
+nz: 12            # Grid points in z
+
+# SED Parameters
+direction: x
+n_kpoints: 30     # Should equal # uc in chosen direction
+bz_coverage: 0.5  # Gives gamma to k to m to k to gamma
+
+# Filtering Parameters
+wmin: 35          # Min frequency (THz)
+wmax: 37          # Max frequency (THz)
+kmin: 1.55        # Min k-point (2π/Å)
+kmax: 1.75        # Max k-point (2π/Å)
+
+# Reconstruction Parameters
+amplitude: 0.05    # Amplitude for mode reconstruction
+
+# Pattern Analysis Parameters
+n_patterns: 3          # Number of patterns to extract
+pattern_amplitude: 1.0 # Visualization amplitude for patterns
