@@ -2,3 +2,4 @@
 sd_*
 *.lammpstrj
 *.npy
+.env
