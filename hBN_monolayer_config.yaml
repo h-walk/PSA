@@ -1,3 +1,8 @@
+do_filtering: False
+do_reconstruction: False
+use_velocities: True
+save_npy: True
+
 # MD Run Parameters
 dt: 0.005
 nx: 60
@@ -17,3 +22,5 @@ kmax: 1.75
 
 # Reconstruction Parameters
 amplitude: 1
+
+
