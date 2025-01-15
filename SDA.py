@@ -1,11 +1,5 @@
 """
 Spectral Displacement (SD) Analysis Tool
-Computes the SD, applies filtering, reconstructs atomic displacements, and outputs
-results as plots and a LAMMPS-compatible trajectory file.
-
-**MODIFIED** to:
-1) Unwrap coords for PBC when loading.
-2) Cast complex arrays to real floats before normalizing in plot_sed to avoid casting errors.
 
 Dependencies:
 - numpy
