@@ -331,7 +331,7 @@ class SDCalculator:
             if max_intensity > 0:
                 intensity = intensity / max_intensity  # safe float division
                 
-            sqrt_intensity = np.sqrt(freqs[:,np.newaxis]*intensity + 1e-20)
+            sqrt_intensity = np.sqrt(intensity + 1e-20)
             
             if vmin is None:
                 vmin = np.percentile(sqrt_intensity[sqrt_intensity>0], 1)

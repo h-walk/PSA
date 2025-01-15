@@ -11,8 +11,8 @@ nz: 1
 
 # SED Parameters
 direction: x
-n_kpoints: 60 #should equal # uc in chosen direction
-bz_coverage: 0.5 #gives gamma to k to m to k to gamma
+n_kpoints: 240 #should equal # uc in chosen direction
+bz_coverage: 2 #gives gamma to k to m to k to gamma
 max_freq: 50
 # Filtering Parameters
 wmin: 35 
