@@ -1,6 +1,6 @@
-do_filtering: False
-do_reconstruction: False
-use_velocities: True
+do_filtering: True
+do_reconstruction: True
+use_velocities: False
 save_npy: True
 
 # MD Run Parameters
@@ -10,17 +10,12 @@ ny: 60
 nz: 1
 
 # SED Parameters
-direction: [0.125,1,0]
-n_kpoints: 250 #should equal # uc in chosen direction
+direction: [1,0,0]
+n_kpoints: 25 #should equal # uc in chosen direction
 bz_coverage: 2 #gives gamma to k to m to k to gamma
 max_freq: 50
 # Filtering Parameters
 wmin: 35 
 wmax: 37
-kmin: 1.55
-kmax: 1.75
-
-# Reconstruction Parameters
-amplitude: 1
-
+amplitude: 10
 
