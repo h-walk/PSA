@@ -40,6 +40,82 @@ warnings.filterwarnings('ignore', message='.*OVITO.*PyPI')
 from ovito.io import import_file
 from ovito.modifiers import UnwrapTrajectoriesModifier
 
+def parse_direction(direction: Union[str, List[float], Dict[str, float]]) -> np.ndarray:
+    """
+    Parse direction specification from various formats into a numpy array.
+    
+    Args:
+        direction: Can be:
+            - string: 'x', 'y', 'z'
+            - list: [x, y, z] coordinates
+            - dict: {'h': h, 'k': k, 'l': l} for crystallographic notation
+            
+    Returns:
+        direction vector as numpy array
+    """
+    if isinstance(direction, str):
+        direction_map = {
+            'x': [1.0, 0.0, 0.0],
+            'y': [0.0, 1.0, 0.0],
+            'z': [0.0, 0.0, 1.0]
+        }
+        if direction.lower() not in direction_map:
+            raise ValueError(f"Unknown direction string: {direction}")
+        vec = np.array(direction_map[direction.lower()], dtype=np.float32)
+    elif isinstance(direction, (list, tuple, np.ndarray)):
+        if len(direction) != 3:
+            raise ValueError("Direction vector must have 3 components")
+        vec = np.array(direction, dtype=np.float32)
+    elif isinstance(direction, dict):
+        # Support for crystallographic notation (hkl)
+        h = direction.get('h', 0.0)
+        k = direction.get('k', 0.0)
+        l = direction.get('l', 0.0)
+        vec = np.array([h, k, l], dtype=np.float32)
+    else:
+        raise ValueError(f"Unsupported direction format: {type(direction)}")
+    
+    if np.all(np.abs(vec) < 1e-10):
+        raise ValueError("Direction vector cannot be zero")
+    
+    return vec
+
+def format_direction_str(vec: np.ndarray) -> str:
+    """
+    Convert a direction vector into a string representation for filenames.
+    
+    Args:
+        vec: normalized direction vector
+    
+    Returns:
+        string representation like 'x', 'xy', '100', '110' etc.
+    """
+    # Round to help identify common directions
+    rounded = np.round(vec, decimals=6)
+    
+    # Check if it's a cardinal direction
+    if np.allclose(rounded, [1, 0, 0]): return 'x'
+    if np.allclose(rounded, [0, 1, 0]): return 'y'
+    if np.allclose(rounded, [0, 0, 1]): return 'z'
+    
+    # Convert to integers if possible (for crystallographic directions)
+    scaled = rounded * np.sqrt(np.sum(rounded * rounded))
+    int_vec = np.round(scaled).astype(int)
+    if np.allclose(scaled, int_vec):
+        # Use crystallographic notation if they're integers
+        return f"{int_vec[0]}{int_vec[1]}{int_vec[2]}"
+    
+    # For non-integer directions, format each component with 2 decimal places
+    def format_component(x):
+        # Convert to string with 2 decimal places and remove trailing zeros
+        s = f"{abs(x):.2f}".rstrip('0').rstrip('.')
+        # Add leading zero if it starts with decimal point
+        if s.startswith('.'): s = '0' + s
+        # Add sign only if negative
+        return ('-' if x < 0 else '') + s
+    
+    return '_'.join(format_component(x) for x in vec)
+
 @dataclass
 class Box:
     """Represents the simulation box with lengths, tilts, and the full cell matrix."""
@@ -170,13 +246,15 @@ class TrajectoryLoader:
             logger.error(f"Failed to load trajectory: {e}")
             raise
             
-    def save_numpy_arrays(self, traj: Trajectory,
+    def save_numpy_arrays(self, traj: Trajectory, direction: Optional[str] = None,
                           sd: Optional[np.ndarray] = None,
                           freqs: Optional[np.ndarray] = None,
                           use_velocities: bool = False) -> None:
         """Saves unwrapped positions, velocities, and optional SD data."""
         try:
             base_path = self.filepath.parent / self.filepath.stem
+            
+            # Save basic trajectory data without direction suffix
             np.save(base_path.with_suffix('.positions.npy'), traj.positions)
             np.save(base_path.with_suffix('.velocities.npy'), traj.velocities)
             np.save(base_path.with_suffix('.types.npy'), traj.types)
@@ -216,28 +294,29 @@ class SDCalculator:
         b2 = 2 * np.pi * np.cross(self.a3, self.a1) / volume
         b3 = 2 * np.pi * np.cross(self.a1, self.a2) / volume
         self.recip_vectors = np.vstack([b1, b2, b3]).astype(np.float32)
-        
-    def get_k_path(self, direction: Union[str, List[float]], bz_coverage: float, 
+    
+    def get_k_path(self, direction: Union[str, List[float], np.ndarray], bz_coverage: float, 
                    n_k: int, lattice_parameter: Optional[float] = None) -> Tuple[np.ndarray, np.ndarray]:
-        if isinstance(direction, str):
-            direction_str = direction.lower()
-            if direction_str == 'x':
-                dir_vector = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        """
+        Calculate k-points along specified direction.
+        Now accepts direction as string, list, or numpy array.
+        """
+        if isinstance(direction, (str, list, dict)):
+            dir_vector = parse_direction(direction)
+        else:
+            dir_vector = direction.astype(np.float32)
+            dir_vector /= np.linalg.norm(dir_vector)
+            
+        # Compute lattice parameter if not provided
+        if lattice_parameter is None:
+            if np.allclose(dir_vector, [1, 0, 0]):
                 computed_a = np.linalg.norm(self.a1)
-            elif direction_str == 'y':
-                dir_vector = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+            elif np.allclose(dir_vector, [0, 1, 0]):
                 computed_a = np.linalg.norm(self.a2)
-            elif direction_str == 'z':
-                dir_vector = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+            elif np.allclose(dir_vector, [0, 0, 1]):
                 computed_a = np.linalg.norm(self.a3)
             else:
-                raise ValueError(f"Unknown direction '{direction}'")
-        else:
-            dir_vector = np.array(direction, dtype=np.float32)
-            dir_vector /= np.linalg.norm(dir_vector)
-            computed_a = np.linalg.norm(self.a1)
-            
-        if lattice_parameter is None:
+                computed_a = np.linalg.norm(self.a1)  # default to a1
             lattice_parameter = computed_a
             logger.info(f"Using computed lattice parameter: {lattice_parameter:.3f} Å")
             
@@ -474,98 +553,117 @@ def main():
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     
-    config = {}
+    # Default configuration
+    config = {
+        'dt': 0.005,
+        'nx': 60,
+        'ny': 60,
+        'nz': 1,
+        'direction': 'x',  # Can be 'x', [1,0,0], or {'h':1, 'k':1, 'l':0}
+        'bz_coverage': 1.0,
+        'n_kpoints': 60,
+        'wmin': 0,
+        'wmax': 50,
+        'max_freq': None,
+        'kmin': None,
+        'kmax': None,
+        'amplitude': 1.0,
+        'lattice_parameter': None,
+        'do_filtering': True,
+        'do_reconstruction': True,
+        'use_velocities': False,
+        'save_npy': False
+    }
+    
+    # Load and merge configuration
     if args.config:
         try:
-            with open(args.config,'r') as fh:
-                config = yaml.safe_load(fh) or {}
+            with open(args.config, 'r') as fh:
+                user_config = yaml.safe_load(fh) or {}
+                config.update(user_config)
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")
     
-    dt = config.get('dt',0.005)
-    nx = config.get('nx',60)
-    ny = config.get('ny',60)
-    nz = config.get('nz',1)
-    direction = config.get('direction','x')
-    bz_coverage = config.get('bz_coverage',1.0)
-    n_kpoints = config.get('n_kpoints',60)
-    wmin = config.get('wmin',0)
-    wmax = config.get('wmax',50)
-    max_freq = config.get('max_freq',None)
-    kmin = config.get('kmin',None)
-    kmax = config.get('kmax',None)
-    amplitude = config.get('amplitude',1.0)
-    lattice_parameter = config.get('lattice_parameter',None)
-    do_filtering = config.get('do_filtering',True)
-    do_reconstruction = config.get('do_reconstruction',True)
-    use_velocities = config.get('use_velocities',False)
-    save_npy = config.get('save_npy',False)
-    
     try:
-        loader = TrajectoryLoader(args.trajectory, dt=dt)
+        # Parse direction and get direction string for filenames
+        direction_vec = parse_direction(config['direction'])
+        dir_str = format_direction_str(direction_vec)
+        
+        loader = TrajectoryLoader(args.trajectory, dt=config['dt'])
         traj = loader.load()
         
-        if save_npy:
+        if config['save_npy']:
             logger.info("Saving trajectory data as numpy arrays...")
-            loader.save_numpy_arrays(traj)
+            loader.save_numpy_arrays(traj, direction=dir_str)
         
-        calc = SDCalculator(traj,nx,ny,nz,use_velocities=use_velocities)
-        k_points, k_vectors = calc.get_k_path(direction,bz_coverage,n_kpoints,
-                                              lattice_parameter=lattice_parameter)
+        calc = SDCalculator(traj, config['nx'], config['ny'], config['nz'],
+                          use_velocities=config['use_velocities'])
         
-        logger.info("Calculating SD...")
-        power_spectrum, freqs = calc.calculate_sd(k_points,k_vectors)
+        # Use the parsed direction vector for k-path
+        k_points, k_vectors = calc.get_k_path(
+            direction_vec,
+            config['bz_coverage'],
+            config['n_kpoints'],
+            lattice_parameter=config['lattice_parameter']
+        )
+        
+        logger.info(f"Calculating SD along direction {dir_str}...")
+        power_spectrum, freqs = calc.calculate_sd(k_points, k_vectors)
         sd = power_spectrum
         
         full_intensity = np.sum(sd, axis=-1)
-        max_int = np.max(np.abs(full_intensity))  # safer to consider abs if complex
+        max_int = np.max(np.abs(full_intensity))
         
-        data_type = 'vel' if use_velocities else 'disp'
-        global_plot = out_dir / f'sd_global_{data_type}.png'
-        filtered_plot = out_dir / f'sd_filtered_{data_type}.png'
-        out_traj = out_dir / f'reconstructed_{data_type}.lammpstrj'
+        data_type = 'vel' if config['use_velocities'] else 'disp'
+        
+        # Create file paths with direction string
+        global_plot = out_dir / f'sd_global_{data_type}_{dir_str}.png'
+        filtered_plot = out_dir / f'sd_filtered_{data_type}_{dir_str}.png'
+        out_traj = out_dir / f'reconstructed_{data_type}_{dir_str}.lammpstrj'
         
         # Plot unfiltered
         calc.plot_sed(
             sd, freqs, k_points,
             output=str(global_plot),
             global_max_intensity=max_int,
-            max_freq=max_freq
+            max_freq=config['max_freq']
         )
         
         filtered_sd = sd
-        if do_filtering:
+        if config['do_filtering']:
             logger.info("Applying filters to SD...")
-            freq_range = (wmin,wmax)
-            k_range = (kmin,kmax) if kmin is not None and kmax is not None else None
-            filtered_sd = calc.filter_sd(sd,freqs,k_points,
-                                         freq_range=freq_range,
-                                         k_range=k_range)
+            freq_range = (config['wmin'], config['wmax'])
+            k_range = (config['kmin'], config['kmax']) if config['kmin'] is not None and config['kmax'] is not None else None
+            filtered_sd = calc.filter_sd(sd, freqs, k_points,
+                                      freq_range=freq_range,
+                                      k_range=k_range)
             calc.plot_sed(
                 filtered_sd, freqs, k_points,
                 output=str(filtered_plot),
                 global_max_intensity=max_int,
-                max_freq=max_freq,
+                max_freq=config['max_freq'],
                 vmin=np.sqrt(1e-6),
                 vmax=np.sqrt(1.0),
-                highlight_region={'freq_range':freq_range,'k_range':k_range}
+                highlight_region={'freq_range': freq_range, 'k_range': k_range}
             )
         
-        if do_reconstruction:
+        if config['do_reconstruction']:
             logger.info("Reconstructing atomic displacements...")
-            recon = TrajectoryReconstructor(traj,calc)
-            disp = recon.reconstruct_mode(filtered_sd,freqs,k_points,k_vectors,
-                                          desired_amplitude=amplitude)
-            recon.write_lammps_trajectory(str(out_traj),disp)
+            recon = TrajectoryReconstructor(traj, calc)
+            disp = recon.reconstruct_mode(filtered_sd, freqs, k_points, k_vectors,
+                                        desired_amplitude=config['amplitude'])
+            recon.write_lammps_trajectory(str(out_traj), disp)
         
-        if save_npy:
+        if config['save_npy']:
             logger.info("Saving SD data as numpy arrays...")
-            loader.save_numpy_arrays(traj, sd=sd, freqs=freqs, use_velocities=use_velocities)
+            loader.save_numpy_arrays(traj, direction=dir_str,
+                                   sd=sd, freqs=freqs,
+                                   use_velocities=config['use_velocities'])
         
-        logger.info("SD analysis completed successfully.")
+        logger.info(f"SD analysis completed successfully for direction {dir_str}.")
     except Exception as e:
         logger.error(f"Error during analysis: {e}")
         sys.exit(1)
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
