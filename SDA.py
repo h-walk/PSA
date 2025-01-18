@@ -34,7 +34,7 @@ try:
     from ovito.modifiers import UnwrapTrajectoriesModifier
 except ImportError as e:
     logging.error(f"Failed to import OVITO: {e}")
-    logging.error("Please install it using: pip install ovito")
+    logging.error("Please install it using: pip install ovito") 
     raise
 
 # Configure logging

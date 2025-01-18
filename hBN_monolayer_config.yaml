@@ -1,6 +1,6 @@
 do_filtering: False
 do_reconstruction: False
-use_velocities: False
+use_velocities: True
 save_npy: True
 
 # MD Run Parameters
