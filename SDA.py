@@ -91,11 +91,12 @@ class Trajectory:
 
 
 class TrajectoryLoader:
-    def __init__(self, filename: str, dt: float = 1.0):
+    def __init__(self, filename: str, dt: float = 1.0, file_format: str = 'auto'):
         """
         Args:
             filename: Path to the trajectory file.
             dt: Time step in picoseconds.
+            file_format: Format of the input file ('auto', 'lammps', 'vasp_outcar')
         """
         if dt <= 0:
             raise ValueError("Time step (dt) must be positive.")
@@ -103,13 +104,40 @@ class TrajectoryLoader:
         if not self.filepath.exists():
             raise FileNotFoundError(f"Trajectory file not found: {filename}")
         self.dt = dt
+        
+        # Validate and set file format
+        valid_formats = ['auto', 'lammps', 'vasp_outcar']
+        if file_format not in valid_formats:
+            raise ValueError(f"Unsupported file format. Must be one of: {valid_formats}")
+        self.file_format = file_format
+
+    def _detect_file_format(self) -> str:
+        """Automatically detect if file is VASP OUTCAR or LAMMPS trajectory."""
+        if self.file_format != 'auto':
+            return self.file_format
+
+        # Check file extension first
+        if self.filepath.suffix.lower() == '.outcar':
+            return 'vasp_outcar'
+        
+        # Peek at content for OUTCAR markers
+        try:
+            with open(self.filepath, 'r') as f:
+                first_line = f.readline().strip()
+                if 'OUTCAR' in first_line or 'vasp' in first_line.lower():
+                    return 'vasp_outcar'
+        except:
+            pass
+        
+        return 'lammps'
 
     def load(self) -> Trajectory:
         """
         Checks if precomputed .npy files exist. If they do, loads from them.
         Otherwise, loads and unwraps the trajectory via OVITO.
         """
-        base_path = self.filepath.parent / self.filepath.stem
+        # Use full filename to avoid conflicts with other trajectories
+        base_path = self.filepath.with_suffix('')
         npy_files = {
             'positions': base_path.with_suffix('.positions.npy'),
             'velocities': base_path.with_suffix('.velocities.npy'),
@@ -125,7 +153,6 @@ class TrajectoryLoader:
                 types = np.load(npy_files['types'])
 
                 # We still need the box from the first frame
-                # so we do a single compute(0) in OVITO to retrieve it
                 pipeline = import_file(str(self.filepath))
                 pipeline.modifiers.append(UnwrapTrajectoriesModifier())
                 frame0 = pipeline.compute(0)
@@ -147,12 +174,26 @@ class TrajectoryLoader:
     def _load_via_ovito(self) -> Trajectory:
         """Loads and unwraps the trajectory via OVITO."""
         logger.info("Loading and unwrapping trajectory with OVITO.")
-        pipeline = import_file(str(self.filepath))
+        format_type = self._detect_file_format()
+        logger.info(f"Detected file format: {format_type}")
+        
+        # Import with columns explicitly specified for OUTCAR to ensure velocities
+        if format_type == 'vasp_outcar':
+            pipeline = import_file(str(self.filepath), 
+                                 columns=["Particle Type", "Position.X", "Position.Y", "Position.Z", 
+                                         "Velocity.X", "Velocity.Y", "Velocity.Z"])
+        else:
+            pipeline = import_file(str(self.filepath))
+            
         pipeline.modifiers.append(UnwrapTrajectoriesModifier())
 
         n_frames = pipeline.source.num_frames
         frame0 = pipeline.compute(0)
         n_atoms = len(frame0.particles.positions)
+
+        if not hasattr(frame0.particles, 'velocities'):
+            raise ValueError("No velocity data found in the trajectory file. "
+                           "For VASP files, ensure you're using an OUTCAR file with velocity data.")
 
         positions = np.zeros((n_frames, n_atoms, 3), dtype=np.float32)
         velocities = np.zeros((n_frames, n_atoms, 3), dtype=np.float32)
@@ -160,10 +201,7 @@ class TrajectoryLoader:
         for i in tqdm(range(n_frames), desc="Loading frames", unit="frame"):
             frame = pipeline.compute(i)
             positions[i] = frame.particles.positions.array.astype(np.float32)
-            if hasattr(frame.particles, 'velocities'):
-                velocities[i] = frame.particles.velocities.array.astype(np.float32)
-            else:
-                pass
+            velocities[i] = frame.particles.velocities.array.astype(np.float32)
 
         types = frame0.particles.particle_types.array
         timesteps = np.arange(n_frames, dtype=np.float32)
@@ -173,13 +211,14 @@ class TrajectoryLoader:
         return Trajectory(positions, velocities, types, timesteps, box)
 
     def save_numpy_arrays(self,
-                          traj: Trajectory,
-                          sd: Optional[np.ndarray] = None,
-                          freqs: Optional[np.ndarray] = None,
-                          direction_str: Optional[str] = None,
-                          use_velocities: bool = False) -> None:
+                         traj: Trajectory,
+                         sd: Optional[np.ndarray] = None,
+                         freqs: Optional[np.ndarray] = None,
+                         direction_str: Optional[str] = None,
+                         use_velocities: bool = False) -> None:
         """
         Saves .npy files for the trajectory and optional SD data.
+        If trajectory .npy files already exist, only saves SD data if provided.
 
         Args:
             traj: Trajectory object.
@@ -189,28 +228,38 @@ class TrajectoryLoader:
             use_velocities: Whether velocities were used or not.
         """
         base_path = self.filepath.parent / self.filepath.stem
-        logger.info("Saving trajectory data to .npy.")
+        
+        # Check if trajectory files already exist
+        traj_files_exist = all(
+            (base_path.with_suffix(suffix)).exists() 
+            for suffix in ['.positions.npy', '.velocities.npy', '.types.npy']
+        )
 
         try:
-            np.save(base_path.with_suffix('.positions.npy'), traj.positions)
-            np.save(base_path.with_suffix('.velocities.npy'), traj.velocities)
-            np.save(base_path.with_suffix('.types.npy'), traj.types)
+            # Only save trajectory data if files don't already exist
+            if not traj_files_exist:
+                logger.info("Saving trajectory data to .npy files.")
+                np.save(base_path.with_suffix('.positions.npy'), traj.positions)
+                np.save(base_path.with_suffix('.velocities.npy'), traj.velocities)
+                np.save(base_path.with_suffix('.types.npy'), traj.types)
 
-            mean_positions = np.mean(traj.positions, axis=0)
-            displacements = traj.positions - mean_positions[None, :, :]
-            np.save(base_path.with_suffix('.mean_positions.npy'), mean_positions)
-            np.save(base_path.with_suffix('.displacements.npy'), displacements)
+                mean_positions = np.mean(traj.positions, axis=0)
+                displacements = traj.positions - mean_positions[None, :, :]
+                np.save(base_path.with_suffix('.mean_positions.npy'), mean_positions)
+                np.save(base_path.with_suffix('.displacements.npy'), displacements)
+                logger.info("Trajectory data saved to .npy files.")
 
+            # Always save SD data if provided (as it's new analysis)
             if sd is not None and freqs is not None and direction_str is not None:
+                logger.info("Saving spectral displacement data.")
                 data_type = 'vel' if use_velocities else 'disp'
                 np.save(base_path.with_suffix(f'.sd_{data_type}_{direction_str}.npy'), sd)
                 np.save(base_path.with_suffix(f'.freqs_{data_type}_{direction_str}.npy'), freqs)
-
-            logger.info("Trajectory and optional SD data saved.")
+                logger.info("Spectral displacement data saved.")
+                
         except Exception as e:
             logger.error(f"Failed to save .npy files: {e}")
             raise
-
 
 def parse_direction(direction: Union[str, List[float], Dict[str, float]]) -> np.ndarray:
     if isinstance(direction, str):
