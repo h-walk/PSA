@@ -1,4 +1,4 @@
-# SDA
+#  SDA
 
 SDA (Spectral Displacement Analysis) is a Python tool for analyzing phonon dynamics in molecular dynamics simulations. 
 

@@ -181,7 +181,7 @@ class TrajectoryLoader:
         if format_type == 'vasp_outcar':
             pipeline = import_file(str(self.filepath), 
                                  columns=["Particle Type", "Position.X", "Position.Y", "Position.Z", 
-                                         "Velocity.X", "Velocity.Y", "Velocity.Z"])
+                                          "Velocity.X", "Velocity.Y", "Velocity.Z"])
         else:
             pipeline = import_file(str(self.filepath))
             
@@ -193,7 +193,7 @@ class TrajectoryLoader:
 
         if not hasattr(frame0.particles, 'velocities'):
             raise ValueError("No velocity data found in the trajectory file. "
-                           "For VASP files, ensure you're using an OUTCAR file with velocity data.")
+                             "For VASP files, ensure you're using an OUTCAR file with velocity data.")
 
         positions = np.zeros((n_frames, n_atoms, 3), dtype=np.float32)
         velocities = np.zeros((n_frames, n_atoms, 3), dtype=np.float32)
@@ -260,6 +260,7 @@ class TrajectoryLoader:
         except Exception as e:
             logger.error(f"Failed to save .npy files: {e}")
             raise
+
 
 def parse_direction(direction: Union[str, List[float], Dict[str, float]]) -> np.ndarray:
     if isinstance(direction, str):
@@ -577,7 +578,8 @@ def main():
             use_velocities=config['use_velocities']
         )
 
-        for direction in directions:
+        # Enumerate directions so that the PNGs have a sortable counter:
+        for i_dir, direction in enumerate(directions, start=1):
             dir_vec = parse_direction(direction)
             dir_str = format_direction_str(dir_vec)
             logger.info(f"Processing SD for direction: {dir_str}")
@@ -593,7 +595,7 @@ def main():
             max_intensity = np.max(np.abs(sd.sum(axis=-1)))
 
             data_type = 'vel' if config['use_velocities'] else 'disp'
-            sed_plot_path = out_dir / f'sd_global_{data_type}_{dir_str}.png'
+            sed_plot_path = out_dir / f"{i_dir:03d}_sd_global_{data_type}_{dir_str}.png"
             sd_calc.plot_sed(
                 sed=sd,
                 freqs=freqs,
