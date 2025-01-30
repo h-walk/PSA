@@ -1,12 +1,8 @@
 """
 Spectral Displacement (SD) Analysis Tool with Time-Domain Frequency Filtering
+Optional 3D dispersion plotting + saving an NPZ archive of kx, ky, freq, and amplitude.
 
-Dependencies:
-- numpy
-- ovito
-- matplotlib
-- tqdm
-- yaml
+Only writes out the trajectory npy files once to avoid clutter.
 """
 
 import numpy as np
@@ -23,8 +19,10 @@ try:
     import matplotlib
     matplotlib.use('Agg')  # Use non-interactive backend
     import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D
+    import matplotlib.colors as mcolors
 except ImportError as e:
-    logging.error(f"Failed to import matplotlib: {e}")
+    logging.error(f"Failed to import matplotlib or mpl_toolkits: {e}")
     logging.error("Please install it using: pip install matplotlib")
     raise
 
@@ -136,7 +134,6 @@ class TrajectoryLoader:
         Checks if precomputed .npy files exist. If they do, loads from them.
         Otherwise, loads and unwraps the trajectory via OVITO.
         """
-        # Use full filename to avoid conflicts with other trajectories
         base_path = self.filepath.with_suffix('')
         npy_files = {
             'positions': base_path.with_suffix('.positions.npy'),
@@ -144,7 +141,6 @@ class TrajectoryLoader:
             'types': base_path.with_suffix('.types.npy'),
         }
 
-        # Check if we already have precomputed .npy
         if all(f.exists() for f in npy_files.values()):
             logger.info("Found existing .npy files. Attempting to load them.")
             try:
@@ -180,8 +176,8 @@ class TrajectoryLoader:
         # Import with columns explicitly specified for OUTCAR to ensure velocities
         if format_type == 'vasp_outcar':
             pipeline = import_file(str(self.filepath), 
-                                 columns=["Particle Type", "Position.X", "Position.Y", "Position.Z", 
-                                          "Velocity.X", "Velocity.Y", "Velocity.Z"])
+                                   columns=["Particle Type", "Position.X", "Position.Y", "Position.Z", 
+                                            "Velocity.X", "Velocity.Y", "Velocity.Z"])
         else:
             pipeline = import_file(str(self.filepath))
             
@@ -210,55 +206,46 @@ class TrajectoryLoader:
         logger.info("Successfully loaded trajectory with OVITO.")
         return Trajectory(positions, velocities, types, timesteps, box)
 
-    def save_numpy_arrays(self,
-                         traj: Trajectory,
-                         sd: Optional[np.ndarray] = None,
-                         freqs: Optional[np.ndarray] = None,
-                         direction_str: Optional[str] = None,
-                         use_velocities: bool = False) -> None:
+    def save_trajectory_npy(self, traj: Trajectory) -> None:
         """
-        Saves .npy files for the trajectory and optional SD data.
-        If trajectory .npy files already exist, only saves SD data if provided.
-
-        Args:
-            traj: Trajectory object.
-            sd: Spectral Displacement data (optional).
-            freqs: Frequencies (optional).
-            direction_str: Label for the direction (if any).
-            use_velocities: Whether velocities were used or not.
+        Saves the trajectory data to .npy files only if not already present.
         """
         base_path = self.filepath.parent / self.filepath.stem
-        
-        # Check if trajectory files already exist
         traj_files_exist = all(
             (base_path.with_suffix(suffix)).exists() 
             for suffix in ['.positions.npy', '.velocities.npy', '.types.npy']
         )
+        if traj_files_exist:
+            logger.info("Trajectory npy files already exist; skipping.")
+            return
 
+        logger.info("Saving trajectory data to .npy files (positions, velocities, types).")
+        np.save(base_path.with_suffix('.positions.npy'), traj.positions)
+        np.save(base_path.with_suffix('.velocities.npy'), traj.velocities)
+        np.save(base_path.with_suffix('.types.npy'), traj.types)
+
+        mean_positions = np.mean(traj.positions, axis=0)
+        displacements = traj.positions - mean_positions[None, :, :]
+        np.save(base_path.with_suffix('.mean_positions.npy'), mean_positions)
+        np.save(base_path.with_suffix('.displacements.npy'), displacements)
+        logger.info("Trajectory data saved to .npy files.")
+
+    def save_sd_arrays(self,
+                       sd: np.ndarray,
+                       freqs: np.ndarray,
+                       direction_str: str,
+                       use_velocities: bool = False) -> None:
+        """
+        Save only the SD and frequency data for the given direction.
+        """
+        base_path = self.filepath.parent / self.filepath.stem
+        data_type = 'vel' if use_velocities else 'disp'
         try:
-            # Only save trajectory data if files don't already exist
-            if not traj_files_exist:
-                logger.info("Saving trajectory data to .npy files.")
-                np.save(base_path.with_suffix('.positions.npy'), traj.positions)
-                np.save(base_path.with_suffix('.velocities.npy'), traj.velocities)
-                np.save(base_path.with_suffix('.types.npy'), traj.types)
-
-                mean_positions = np.mean(traj.positions, axis=0)
-                displacements = traj.positions - mean_positions[None, :, :]
-                np.save(base_path.with_suffix('.mean_positions.npy'), mean_positions)
-                np.save(base_path.with_suffix('.displacements.npy'), displacements)
-                logger.info("Trajectory data saved to .npy files.")
-
-            # Always save SD data if provided (as it's new analysis)
-            if sd is not None and freqs is not None and direction_str is not None:
-                logger.info("Saving spectral displacement data.")
-                data_type = 'vel' if use_velocities else 'disp'
-                np.save(base_path.with_suffix(f'.sd_{data_type}_{direction_str}.npy'), sd)
-                np.save(base_path.with_suffix(f'.freqs_{data_type}_{direction_str}.npy'), freqs)
-                logger.info("Spectral displacement data saved.")
-                
+            logger.info(f"Saving spectral displacement data for direction {direction_str}")
+            np.save(base_path.with_suffix(f'.sd_{data_type}_{direction_str}.npy'), sd)
+            np.save(base_path.with_suffix(f'.freqs_{data_type}_{direction_str}.npy'), freqs)
         except Exception as e:
-            logger.error(f"Failed to save .npy files: {e}")
+            logger.error(f"Failed to save SD npy files: {e}")
             raise
 
 
@@ -521,6 +508,90 @@ def write_filtered_trajectory(filename: str,
                 f.write(f"{i_atom+1} {atype} {x:.6f} {y:.6f} {z:.6f}\n")
 
 
+def gather_3d_data(k_vectors_list: List[np.ndarray],
+                   freqs_list: List[np.ndarray],
+                   sed_list: List[np.ndarray],
+                   intensity_threshold: float = 0.01):
+    """
+    Aggregates data into 4 arrays: kx_vals, ky_vals, freq_vals, amp_vals,
+    by summing amplitude over the 3 polarization directions (i.e., axis=-1).
+    """
+    kx_vals = []
+    ky_vals = []
+    freq_vals = []
+    amp_vals = []
+
+    for freqs, kvecs, sed in zip(freqs_list, k_vectors_list, sed_list):
+        # sed is shape (n_freq, n_k, 3). Sum over alpha for total amplitude:
+        intensity_3d = np.abs(sed).sum(axis=-1)  # shape (n_freq, n_k)
+        max_chunk_amp = intensity_3d.max()
+        if max_chunk_amp < 1e-20:
+            continue
+
+        n_freq = len(freqs)
+        n_k = len(kvecs)
+
+        for i_f in range(n_freq):
+            for i_k in range(n_k):
+                amp = intensity_3d[i_f, i_k]
+                if amp < intensity_threshold * max_chunk_amp:
+                    continue
+
+                kx_vals.append(kvecs[i_k][0])
+                ky_vals.append(kvecs[i_k][1])
+                freq_vals.append(freqs[i_f])
+                amp_vals.append(amp)
+
+    return (np.array(kx_vals, dtype=np.float32),
+            np.array(ky_vals, dtype=np.float32),
+            np.array(freq_vals, dtype=np.float32),
+            np.array(amp_vals, dtype=np.float32))
+
+
+def plot_3d_dispersion(kx_vals: np.ndarray,
+                       ky_vals: np.ndarray,
+                       freq_vals: np.ndarray,
+                       amp_vals: np.ndarray,
+                       output_path: str):
+    """
+    Creates a 3D scatter plot of (kx, ky, freq) colored by the log amplitude.
+    """
+    if len(kx_vals) == 0:
+        logger.warning("No 3D data points to plot. Check intensity_threshold or directions.")
+        return
+
+    amp_vals[amp_vals < 1e-20] = 1e-20
+
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Scatter, colored by log amplitude
+    sc = ax.scatter(
+        kx_vals, ky_vals, freq_vals,
+        c=np.log(amp_vals),
+        cmap='plasma',
+        alpha=0.7,
+        marker='o',
+        s=10,
+        edgecolors='none',
+        norm=mcolors.Normalize(vmin=np.log(amp_vals.min()),
+                               vmax=np.log(amp_vals.max()))
+    )
+
+    ax.set_xlabel(r'$k_x$ (2$\pi$/Å)')
+    ax.set_ylabel(r'$k_y$ (2$\pi$/Å)')
+    ax.set_zlabel('Frequency (THz)')
+
+    cbar = plt.colorbar(sc, ax=ax)
+    cbar.set_label('log(Amplitude)')
+
+    plt.title('3D Dispersion Visualization')
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+    logger.info(f"3D dispersion plot saved to {output_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(description='Spectral Displacement (SD) Analysis Tool with Time-Domain Filter')
     parser.add_argument('trajectory', help='Path to the trajectory file')
@@ -549,7 +620,8 @@ def main():
         'do_filtering': False,
         'do_reconstruction': False,
         'use_velocities': True,
-        'save_npy': True
+        'save_npy': True,
+        '3D_Dispersion': False
     }
 
     if args.config:
@@ -563,11 +635,13 @@ def main():
     directions = config['directions'] if config['directions'] else [config.get('direction', 'x')]
 
     try:
+        # Load trajectory
         loader = TrajectoryLoader(args.trajectory, dt=config['dt'])
         traj = loader.load()
 
+        # Save trajectory npy files just once (if save_npy is True)
         if config['save_npy']:
-            loader.save_numpy_arrays(traj)
+            loader.save_trajectory_npy(traj)
 
         sd_calc = SDCalculator(
             traj=traj,
@@ -578,7 +652,11 @@ def main():
             use_velocities=config['use_velocities']
         )
 
-        # Enumerate directions so that the PNGs have a sortable counter:
+        # Collect data for optional 3D plot
+        all_kvecs = []
+        all_freqs = []
+        all_seds = []
+
         for i_dir, direction in enumerate(directions, start=1):
             dir_vec = parse_direction(direction)
             dir_str = format_direction_str(dir_vec)
@@ -594,6 +672,11 @@ def main():
             sd, freqs = sd_calc.calculate_sd(k_points, k_vectors)
             max_intensity = np.max(np.abs(sd.sum(axis=-1)))
 
+            all_kvecs.append(k_vectors)  # shape (n_k, 3)
+            all_freqs.append(freqs)      # shape (n_freq,)
+            all_seds.append(sd)          # shape (n_freq, n_k, 3)
+
+            # Plot and save SED for this direction
             data_type = 'vel' if config['use_velocities'] else 'disp'
             sed_plot_path = out_dir / f"{i_dir:03d}_sd_global_{data_type}_{dir_str}.png"
             sd_calc.plot_sed(
@@ -606,14 +689,42 @@ def main():
                 max_freq=config['max_freq']
             )
 
+            # Save only SD arrays (not the entire trajectory) if config['save_npy'] is True
             if config['save_npy']:
-                loader.save_numpy_arrays(
-                    traj=traj,
+                loader.save_sd_arrays(
                     sd=sd,
                     freqs=freqs,
                     direction_str=dir_str,
                     use_velocities=config['use_velocities']
                 )
+
+        if config.get('3D_Dispersion', False):
+            logger.info("Generating 3D dispersion data and plot.")
+            kx_vals, ky_vals, freq_vals, amp_vals = gather_3d_data(
+                k_vectors_list=all_kvecs,
+                freqs_list=all_freqs,
+                sed_list=all_seds,
+                intensity_threshold=0.01
+            )
+
+            data_3d_path = out_dir / "3d_dispersion_data.npz"
+            np.savez(
+                data_3d_path,
+                kx=kx_vals,
+                ky=ky_vals,
+                freq=freq_vals,
+                amp=amp_vals
+            )
+            logger.info(f"Saved 3D dispersion data to {data_3d_path}")
+
+            three_d_plot_path = out_dir / '3d_dispersion.png'
+            plot_3d_dispersion(
+                kx_vals=kx_vals,
+                ky_vals=ky_vals,
+                freq_vals=freq_vals,
+                amp_vals=amp_vals,
+                output_path=str(three_d_plot_path)
+            )
 
         if config['do_filtering']:
             logger.info("Applying time-domain frequency filter.")
