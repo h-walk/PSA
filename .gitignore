@@ -2,4 +2,6 @@
 sd_*
 *.lammpstrj
 *.npy
+*.npz
 .env
+*.png

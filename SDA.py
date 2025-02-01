@@ -525,8 +525,6 @@ def gather_3d_data(k_vectors_list: List[np.ndarray],
         # sed is shape (n_freq, n_k, 3). Sum over alpha for total amplitude:
         intensity_3d = np.abs(sed).sum(axis=-1)  # shape (n_freq, n_k)
         max_chunk_amp = intensity_3d.max()
-        if max_chunk_amp < 1e-20:
-            continue
 
         n_freq = len(freqs)
         n_k = len(kvecs)
@@ -534,8 +532,6 @@ def gather_3d_data(k_vectors_list: List[np.ndarray],
         for i_f in range(n_freq):
             for i_k in range(n_k):
                 amp = intensity_3d[i_f, i_k]
-                if amp < intensity_threshold * max_chunk_amp:
-                    continue
 
                 kx_vals.append(kvecs[i_k][0])
                 ky_vals.append(kvecs[i_k][1])
