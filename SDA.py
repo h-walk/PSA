@@ -230,69 +230,62 @@ class TrajectoryLoader:
         np.save(base_path.with_suffix('.displacements.npy'), displacements)
         logger.info("Trajectory data saved to .npy files.")
 
-    def save_sd_arrays(self,
-                       sd: np.ndarray,
-                       freqs: np.ndarray,
-                       direction_str: str,
-                       use_velocities: bool = False) -> None:
-        """
-        Save only the SD and frequency data for the given direction.
-        """
-        base_path = self.filepath.parent / self.filepath.stem
-        data_type = 'vel' if use_velocities else 'disp'
+    # Note: The function save_sd_arrays is now deprecated per new requirements.
+    # We no longer save individual SD .npy files for each direction.
+    # def save_sd_arrays(self, ...): 
+    #     ...
+
+
+def parse_direction(direction: Union[str, int, float, List[float], Dict[str, float]]) -> np.ndarray:
+    """
+    Parse a direction specification.
+    If a numeric value (int or float) is provided, it is interpreted as an angle in degrees
+    measured from the positive x-axis (unit circle convention).
+    If a string can be converted to a float, it is also interpreted as an angle in degrees.
+    Otherwise, falls back to legacy behavior.
+    """
+    if isinstance(direction, (int, float)):
+        # Angle in degrees.
+        rad = np.deg2rad(direction)
+        vec = np.array([np.cos(rad), np.sin(rad), 0.0], dtype=np.float32)
+    elif isinstance(direction, str):
         try:
-            logger.info(f"Saving spectral displacement data for direction {direction_str}")
-            np.save(base_path.with_suffix(f'.sd_{data_type}_{direction_str}.npy'), sd)
-            np.save(base_path.with_suffix(f'.freqs_{data_type}_{direction_str}.npy'), freqs)
-        except Exception as e:
-            logger.error(f"Failed to save SD npy files: {e}")
-            raise
-
-
-def parse_direction(direction: Union[str, List[float], Dict[str, float]]) -> np.ndarray:
-    if isinstance(direction, str):
-        direction_map = {'x': [1.0, 0.0, 0.0],
-                         'y': [0.0, 1.0, 0.0],
-                         'z': [0.0, 0.0, 1.0]}
-        if direction.lower() not in direction_map:
-            raise ValueError(f"Unknown direction string: {direction}")
-        vec = np.array(direction_map[direction.lower()], dtype=np.float32)
+            angle = float(direction)
+            rad = np.deg2rad(angle)
+            vec = np.array([np.cos(rad), np.sin(rad), 0.0], dtype=np.float32)
+        except ValueError:
+            # Fallback to legacy string mapping.
+            direction_map = {'x': [1.0, 0.0, 0.0],
+                             'y': [0.0, 1.0, 0.0],
+                             'z': [0.0, 0.0, 1.0]}
+            if direction.lower() not in direction_map:
+                raise ValueError(f"Unknown direction string: {direction}")
+            vec = np.array(direction_map[direction.lower()], dtype=np.float32)
     elif isinstance(direction, (list, tuple, np.ndarray)):
-        if len(direction) != 3:
-            raise ValueError("Direction vector must have 3 components")
-        vec = np.array(direction, dtype=np.float32)
+        if len(direction) == 1:
+            # Single value in list: assume angle in degrees.
+            angle = float(direction[0])
+            rad = np.deg2rad(angle)
+            vec = np.array([np.cos(rad), np.sin(rad), 0.0], dtype=np.float32)
+        elif len(direction) == 3:
+            vec = np.array(direction, dtype=np.float32)
+        else:
+            raise ValueError("Direction vector must have 1 or 3 components")
     elif isinstance(direction, dict):
-        vec = np.array([direction.get('h', 0.0),
-                        direction.get('k', 0.0),
-                        direction.get('l', 0.0)], dtype=np.float32)
+        if 'angle' in direction:
+            angle = float(direction['angle'])
+            rad = np.deg2rad(angle)
+            vec = np.array([np.cos(rad), np.sin(rad), 0.0], dtype=np.float32)
+        else:
+            vec = np.array([direction.get('h', 0.0),
+                            direction.get('k', 0.0),
+                            direction.get('l', 0.0)], dtype=np.float32)
     else:
         raise ValueError(f"Unsupported direction format: {type(direction)}")
 
-    if np.all(np.abs(vec) < 1e-10):
+    if np.linalg.norm(vec) < 1e-10:
         raise ValueError("Direction vector cannot be zero")
-
     return vec
-
-
-def format_direction_str(vec: np.ndarray) -> str:
-    rounded = np.round(vec, decimals=6)
-    if np.allclose(rounded, [1, 0, 0]): return 'x'
-    if np.allclose(rounded, [0, 1, 0]): return 'y'
-    if np.allclose(rounded, [0, 0, 1]): return 'z'
-
-    scaled = rounded * np.linalg.norm(rounded)
-    int_vec = np.round(scaled).astype(int)
-    if np.allclose(scaled, int_vec):
-        return f"{int_vec[0]}{int_vec[1]}{int_vec[2]}"
-
-    components = []
-    for x in vec:
-        sign = '-' if x < 0 else ''
-        s = f"{abs(x):.2f}".rstrip('0').rstrip('.')
-        if s.startswith('.'):
-            s = '0' + s
-        components.append(sign + s)
-    return '_'.join(components)
 
 
 class SDCalculator:
@@ -321,7 +314,7 @@ class SDCalculator:
         self.recip_vectors = np.vstack([b1, b2, b3]).astype(np.float32)
 
     def get_k_path(self,
-                   direction: Union[str, List[float], np.ndarray],
+                   direction: Union[str, int, float, List[float], np.ndarray],
                    bz_coverage: float,
                    n_k: int,
                    lattice_parameter: Optional[float] = None
@@ -524,15 +517,12 @@ def gather_3d_data(k_vectors_list: List[np.ndarray],
     for freqs, kvecs, sed in zip(freqs_list, k_vectors_list, sed_list):
         # sed is shape (n_freq, n_k, 3). Sum over alpha for total amplitude:
         intensity_3d = np.abs(sed).sum(axis=-1)  # shape (n_freq, n_k)
-        max_chunk_amp = intensity_3d.max()
-
         n_freq = len(freqs)
         n_k = len(kvecs)
 
         for i_f in range(n_freq):
             for i_k in range(n_k):
                 amp = intensity_3d[i_f, i_k]
-
                 kx_vals.append(kvecs[i_k][0])
                 ky_vals.append(kvecs[i_k][1])
                 freq_vals.append(freqs[i_f])
@@ -598,12 +588,13 @@ def main():
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Default config: note that 'directions' now expects a list of angles in degrees.
     config = {
         'dt': 0.005,
         'nx': 60,
         'ny': 60,
         'nz': 1,
-        'directions': None,
+        'directions': None,  # e.g., [0, 45, 90]
         'n_kpoints': 60,
         'bz_coverage': 1.0,
         'max_freq': 50,
@@ -616,7 +607,7 @@ def main():
         'do_filtering': False,
         'do_reconstruction': False,
         'use_velocities': True,
-        'save_npy': True,
+        'save_npy': True,       # For trajectory only; SD arrays per direction will no longer be saved.
         '3D_Dispersion': False
     }
 
@@ -628,7 +619,8 @@ def main():
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")
 
-    directions = config['directions'] if config['directions'] else [config.get('direction', 'x')]
+    # Use provided directions (angles in degrees) or default to 0 degrees.
+    directions = config['directions'] if config.get('directions') is not None else [0]
 
     try:
         # Load trajectory
@@ -648,18 +640,19 @@ def main():
             use_velocities=config['use_velocities']
         )
 
-        # Collect data for optional 3D plot
+        # Collect data for final 3D dispersion plot (if requested)
         all_kvecs = []
         all_freqs = []
         all_seds = []
 
-        for i_dir, direction in enumerate(directions, start=1):
-            dir_vec = parse_direction(direction)
-            dir_str = format_direction_str(dir_vec)
-            logger.info(f"Processing SD for direction: {dir_str}")
+        for i_dir, angle in enumerate(directions, start=1):
+            # Here, angle is interpreted as degrees from the x-axis.
+            dir_vec = parse_direction(angle)
+            angle_str = f"{float(angle):.1f}"
+            logger.info(f"Processing SD for angle: {angle_str}°")
 
             k_points, k_vectors = sd_calc.get_k_path(
-                direction=dir_vec,
+                direction=angle,  # passing the angle directly
                 bz_coverage=config['bz_coverage'],
                 n_k=config['n_kpoints'],
                 lattice_parameter=config['lattice_parameter']
@@ -672,27 +665,20 @@ def main():
             all_freqs.append(freqs)      # shape (n_freq,)
             all_seds.append(sd)          # shape (n_freq, n_k, 3)
 
-            # Plot and save SED for this direction
+            # Plot and save SED for this angle using the angle in the filename.
             data_type = 'vel' if config['use_velocities'] else 'disp'
-            sed_plot_path = out_dir / f"{i_dir:03d}_sd_global_{data_type}_{dir_str}.png"
+            sed_plot_path = out_dir / f"{i_dir:03d}_sd_global_{data_type}_{angle_str}deg.png"
             sd_calc.plot_sed(
                 sed=sd,
                 freqs=freqs,
                 k_points=k_points,
                 output=str(sed_plot_path),
-                direction_label=f"(direction: {dir_str})",
+                direction_label=f"(angle: {angle_str}°)",
                 global_max_intensity=max_intensity,
                 max_freq=config['max_freq']
             )
 
-            # Save only SD arrays (not the entire trajectory) if config['save_npy'] is True
-            if config['save_npy']:
-                loader.save_sd_arrays(
-                    sd=sd,
-                    freqs=freqs,
-                    direction_str=dir_str,
-                    use_velocities=config['use_velocities']
-                )
+            # Do NOT save individual SD .npy files per angle per new requirements.
 
         if config.get('3D_Dispersion', False):
             logger.info("Generating 3D dispersion data and plot.")
