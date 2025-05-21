@@ -96,7 +96,7 @@ class SEDCalculator:
             else: 
                 raise ValueError("Invalid/small lattice_param for k-path & |a1| too small for fallback.")
         
-        k_max_val = bz_coverage * (np.pi / lat_param)
+        k_max_val = bz_coverage * (2*np.pi / lat_param)
         if n_k < 1: 
             raise ValueError("n_k (k-points) must be >= 1.")
         k_mags = np.linspace(0, k_max_val, n_k, dtype=np.float32) if n_k > 1 else np.array([0.0 if np.isclose(k_max_val,0) else k_max_val], dtype=np.float32)
@@ -459,16 +459,4 @@ class SEDCalculator:
         elif plot_dir_ised:
             logger.warning("iSED plot requested, but no combined SED data available.")
 
-    # @staticmethod # out_to_qdump is now a standalone function in sda.io.writer
-    # def out_to_qdump(filename: str, positions_tf: np.ndarray, types_tf: np.ndarray, sx: float, sy: float, sz: float):
-    #     n_fr, n_at, _ = positions_tf.shape
-    #     Path(filename).parent.mkdir(parents=True, exist_ok=True)
-    #     with open(filename, 'w') as f:
-    #         for i_fr in range(n_fr):
-    #             f.write(f"ITEM: TIMESTEP\\n{i_fr}\\n")
-    #             f.write(f"ITEM: NUMBER OF ATOMS\\n{n_at}\\n")
-    #             f.write(f"ITEM: BOX BOUNDS pp pp pp\\n0.0 {sx}\\n0.0 {sy}\\n0.0 {sz}\\n")
-    #             f.write("ITEM: ATOMS id type x y z\\n")
-    #             for j_at in range(n_at):
-    #                 f.write(f"{j_at+1} {int(types_tf[j_at])} {positions_tf[i_fr,j_at,0]:.6f} {positions_tf[i_fr,j_at,1]:.6f} {positions_tf[i_fr,j_at,2]:.6f}\\n")
-    #     logger.debug(f"Wrote iSED reconstruction to Qdump: {filename}") 
+
