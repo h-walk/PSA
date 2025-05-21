@@ -27,7 +27,7 @@ SDA is a powerful tool for analyzing vibrational properties of materials from mo
 
 ### Installation Steps
 
-1.  **Navigate to the `SDA_modular` directory.**
+1.  **Navigate to the project root directory.**
     This is the directory containing this `README.md` file and the `src/` directory.
 
 2.  **Create and activate a virtual environment (recommended):**
@@ -63,7 +63,7 @@ from sda import TrajectoryLoader, SEDCalculator, SED, SEDPlotter
 
 # Define parameters (these would typically come from your knowledge of the system
 # or a configuration file for more complex workflows)
-trajectory_file = "monolayer300k.lammpstrj" # Replace with your trajectory
+trajectory_file = "monolayer300k.lammpstrj" # Replace with your trajectory. This file is expected to be in the project root or a path specified.
 dt_ps = 0.0005           # Timestep in picoseconds (must match your simulation)
 nx, ny, nz = 60, 60, 1   # Primitive cells in supercell (e.g., for hBN monolayer)
 lat_param = 2.491        # Characteristic lattice parameter (e.g., Angstroms)
@@ -144,23 +144,27 @@ plotter.generate_plot()
 print(f"Programmatic example finished. Output in {output_dir}")
 ```
 
-For more detailed programmatic examples, see the scripts in the `SDA_modular/examples/` directory.
+For more detailed programmatic examples, see the scripts in the `examples/` directory.
 
 ## Command-Line Interface (CLI)
 
-The `SDA_modular` package provides a command-line interface for running analyses using a configuration file.
+The `sda` package provides a command-line interface for running analyses using a configuration file.
 
 **Basic Usage:**
 
-After installation (`pip install -e .`), you can run the CLI tool:
+After installation (`pip install -e .`), you can run the CLI tool from the project root:
 
 ```bash
 sda --trajectory path/to/your/trajectory.file --config path/to/your/config.yaml --output-dir path/to/output
 ```
 
--   `--trajectory`: Path to your MD trajectory file (e.g., LAMMPS dump, VASP OUTCAR).
--   `--config`: Path to your YAML configuration file.
--   `--output-dir`: (Optional) Directory where results will be saved (defaults to `sda_output`).
+-   `--trajectory`: Path to your MD trajectory file (e.g., LAMMPS dump, VASP OUTCAR). **(Required)**
+-   `--config`: Path to your YAML configuration file. (Optional, uses defaults if not provided)
+-   `--output-dir`: Directory where results will be saved (defaults to `sda_output`). (Optional)
+-   `--chiral`: Enable chiral SED analysis. This overrides the `chiral_mode_enabled` setting in the configuration file. (Optional flag)
+-   `--dt`: Override the MD simulation timestep (in picoseconds) specified in the configuration file. (Optional)
+-   `--nk`: Override the number of k-points (`n_kpoints`) for SED calculation specified in the configuration file. (Optional)
+-   `--recalculate-sed`: Force recalculation of SED data, even if cached `.npy` files exist. (Optional flag)
 
 Run `sda --help` for a full list of CLI options and their descriptions.
 
@@ -231,27 +235,26 @@ ised: # Inverse SED Reconstruction Parameters
     output_dump_filename: 'ised_motion.dump' # Name of the output LAMMPS dump file.
 ```
 
-A more comprehensive example configuration file, `hBN_monolayer_config.yaml`, can be found in the parent directory of `SDA_modular` (the main project root). This file is used by the example scripts.
+A more comprehensive example configuration file, `hBN_monolayer_config.yaml`, can be found in the project root directory. This file is used by the example scripts.
 
 ## Code Examples
 
-Runnable Python script examples demonstrating various features of the `sda` package can be found in the `SDA_modular/examples/` directory:
+Runnable Python script examples demonstrating various features of the `sda` package can be found in the `examples/` directory:
 
 -   `basic_sed_analysis.py`: Demonstrates standard SED calculation and plotting.
 -   `chiral_sed_analysis.py`: Shows how to perform chiral SED.
 -   `ised_reconstruction.py`: Illustrates iSED mode reconstruction.
+-   `visualization_example.py`: Shows various plotting capabilities.
 
-These examples are pre-configured to use parameters similar to those found in the `hBN_monolayer_config.yaml` file, which should be placed in the main project directory (one level above `SDA_modular/`) for them to run correctly with the intended data. You may need to adjust file paths within the examples if your data or the config file are located elsewhere.
+These examples are pre-configured to use parameters similar to those found in the `hBN_monolayer_config.yaml` file, which should be placed in the main project directory for them to run correctly with the intended data. You may need to adjust file paths within the examples if your data or the config file are located elsewhere.
 
 ## Running Tests
 
-To run the test suite, ensure you have `pytest` installed (`pip install pytest`). Then, from the `SDA_modular` directory (this directory), simply run:
+To run the test suite, ensure you have `pytest` installed (`pip install pytest`). Then, from the project root directory, simply run:
 
 ```bash
 pytest
 ```
-
-This will discover and run all tests located in the `tests/` directory.
 
 ## Documentation Structure
 
