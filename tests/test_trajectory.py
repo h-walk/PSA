@@ -22,6 +22,7 @@ def valid_trajectory_data():
         "box_matrix": box_matrix,
         "box_lengths": box_lengths,
         "box_tilts": box_tilts,
+        "dt_ps": 1.0,
     }
 
 def test_trajectory_initialization(valid_trajectory_data):

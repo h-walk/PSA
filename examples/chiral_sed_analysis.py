@@ -60,21 +60,8 @@ def main():
         summation_mode='coherent' # Must be coherent for subsequent chiral phase calculation
         )
 
-    # --- Add this section to inspect frequency range ---
-    if freqs.size > 0:
-        min_freq_thz = np.min(freqs)
-        max_freq_thz = np.max(freqs)
-        positive_freqs = freqs[freqs >= 0]
-        min_pos_freq_thz = np.min(positive_freqs) if positive_freqs.size > 0 else np.nan
-        max_pos_freq_thz = np.max(positive_freqs) if positive_freqs.size > 0 else np.nan
-        print(f"Calculated frequency range (THz): {min_freq_thz:.4f} to {max_freq_thz:.4f}")
-        print(f"Positive frequency range (THz): {min_pos_freq_thz:.4f} to {max_pos_freq_thz:.4f}")
-    else:
-        print("No frequencies calculated (empty array).")
-    # --- End of section ---
-
-    # Calculate chiral phase
-    print("Calculating chiral phase...")
+    # Calculate phase angle
+    print("Calculating phase angle...")
     phase = calculator.calculate_chiral_phase(
         Z1=sed_complex_data[:,:,0],
         Z2=sed_complex_data[:,:,1],
