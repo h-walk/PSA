@@ -1,30 +1,30 @@
-# SDA API Reference
+# PSA API Reference
 
-This section provides detailed API documentation for the `sda` package.
+This section provides detailed API documentation for the `psa` package.
 
 ## Modules Overview
 
-The `sda` package is organized into the following main modules:
+The `psa` package is organized into the following main modules:
 
-- **`sda.core`**: Core data structures and the main calculation engine.
+- **`psa.core`**: Core data structures and the main calculation engine.
   - [`Trajectory`](core/trajectory.md): Data structure for molecular dynamics trajectories.
   - [`SED`](core/sed.md): Data structure for Spectral Energy Density and related data.
   - [`SEDCalculator`](core/sed_calculator.md): Main class for performing SED and iSED calculations.
-- **`sda.io`**: Modules for data input/output.
+- **`psa.io`**: Modules for data input/output.
   - [`TrajectoryLoader`](io/loader.md): Handles loading of trajectory data from files.
   - [`TrajectoryWriter`](io/writer.md): For writing trajectory data (if implemented for general use).
   - [`out_to_qdump`](io/writer.md): Function to write iSED reconstruction data to Qdump format.
-- **`sda.visualization`**: Plotting and visualization tools.
+- **`psa.visualization`**: Plotting and visualization tools.
   - [`SEDPlotter`](visualization/plotter.md): Class for generating various SED plots.
   - [`styles`](visualization/styles.md): Predefined plot styles and color schemes.
-- **`sda.utils`**: Helper utilities.
+- **`psa.utils`**: Helper utilities.
   - [`helpers`](utils/helpers.md): Various utility functions (e.g., `parse_direction`, `ensure_directory`).
-- **`sda.cli`**: Command-line interface.
+- **`psa.cli`**: Command-line interface.
   - While primarily for command-line use, it orchestrates the package's functionalities.
 
 ## Core Data Structures
 
-### `sda.core.Trajectory`
+### `psa.core.Trajectory`
 
 ```python
 from dataclasses import dataclass
@@ -41,7 +41,7 @@ class Trajectory:
     box_tilts: np.ndarray  # Shape: (3,), typically [xy, xz, yz] for triclinic
 ```
 
-### `sda.core.SED`
+### `psa.core.SED`
 
 ```python
 from dataclasses import dataclass
@@ -59,7 +59,7 @@ class SED:
 
 ## Main Classes
 
-### `sda.core.SEDCalculator`
+### `psa.core.SEDCalculator`
 
 The primary class for performing SED and iSED calculations.
 
@@ -158,7 +158,7 @@ class SEDCalculator:
              plot_dir_ised: Optional[Path] = None, plot_max_freq: Optional[float] = None
              ) -> None:
         """
-        Perform Inverse Spectral Displacement (iSED) reconstruction for a specific mode.
+        Perform Inverse Phonon Spectral Analysis (iSED) reconstruction for a specific mode.
         This involves calculating SED internally along a specified path to find the target mode,
         then reconstructing the atomic motion.
 
@@ -180,7 +180,7 @@ class SEDCalculator:
         pass
 ```
 
-### `sda.visualization.SEDPlotter`
+### `psa.visualization.SEDPlotter`
 
 Class for generating plots from `SED` objects.
 
@@ -211,7 +211,7 @@ class SEDPlotter:
 
 ## CLI Configuration Example
 
-The `sda` command-line tool uses a YAML configuration file. Below is an example structure:
+The `psa` command-line tool uses a YAML configuration file. Below is an example structure:
 
 ```yaml
 general:

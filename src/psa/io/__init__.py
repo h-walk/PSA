@@ -1,5 +1,5 @@
 """
-Input/Output module for SDA.
+Input/Output module for PSA.
 
 This module provides functionality for loading trajectory data from various file formats
 and saving analysis results and data.

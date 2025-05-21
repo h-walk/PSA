@@ -1,8 +1,8 @@
 """
-Configuration management module for SDA.
+Configuration management module for PSA.
 
 This module provides functionality for loading, validating, and managing
-configuration settings for SDA analysis.
+configuration settings for PSA analysis.
 """
 import yaml
 from pathlib import Path
@@ -13,7 +13,7 @@ import json
 logger = logging.getLogger(__name__)
 
 class ConfigManager:
-    """Class for managing SDA configuration settings."""
+    """Class for managing PSA configuration settings."""
     
     def __init__(self, config_file: Optional[Union[str, Path]] = None):
         """

@@ -1,8 +1,8 @@
 """
-Utilities module for SDA.
+Utilities module for PSA.
 
 This module provides various utility functions and configuration management
-for the SDA package.
+for the PSA package.
 """
 
 from .config_manager import ConfigManager

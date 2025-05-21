@@ -211,7 +211,7 @@ class SEDPlotter:
         ax.set_ylabel(self.plot_params['ylabel'])
         
         title_text = self.plot_params['title']
-        # OriginalSDA adds direction_label to title if not used for xlabel. Here, direction_label makes xlabel specific.
+        # OriginalPSA adds direction_label to title if not used for xlabel. Here, direction_label makes xlabel specific.
         # If we want it in title too, that's an option:
         # if self.plot_params['direction_label'] and xlabel_text != self.plot_params['direction_label']:
         #     title_text += f"\\nDirection: {self.plot_params['direction_label']}"
@@ -237,7 +237,7 @@ class SEDPlotter:
             if 'k_point_target' in hl and 'freq_point_target' in hl:
                 ax.plot(hl['k_point_target'], hl['freq_point_target'], 
                         'g+', markersize=10, label='Target point') # Changed from 'r+' to 'g+'
-                if self.plot_params.get('highlight_label', False): # OriginalSDA has show_target_label
+                if self.plot_params.get('highlight_label', False): # OriginalPSA has show_target_label
                      ax.legend()
         
         # Add colorbar

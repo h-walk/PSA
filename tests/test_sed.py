@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 from pathlib import Path
-from sda.core.sed import SED
+from psa.core.sed import SED
 
 @pytest.fixture
 def valid_sed_data():

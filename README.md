@@ -1,12 +1,12 @@
-# Spectral Displacement Analysis (SDA)
+# Phonon Spectral Analysis (PSA)
 
-A Python package for analyzing molecular dynamics trajectories using Spectral Displacement Analysis (SDA) and Inverse SED (iSED) reconstruction. This is the `SDA_modular` version.
+A Python package for analyzing molecular dynamics trajectories using Phonon Spectral Analysis (PSA) and Inverse SED (iSED) reconstruction.
 
 ## Overview
 
-SDA is a powerful tool for analyzing vibrational properties of materials from molecular dynamics simulations. This package provides:
+PSA is a powerful tool for analyzing vibrational properties of materials from molecular dynamics simulations. This package provides:
 
-- Spectral Displacement Analysis (SDA) for calculating phonon dispersion relations.
+- Phonon Spectral Analysis (PSA) for calculating phonon dispersion relations.
 - Chiral SED analysis for studying chiral phonon modes.
 - Inverse SED (iSED) reconstruction for visualizing phonon modes.
 - Comprehensive visualization tools for 2D and 3D plots.
@@ -32,13 +32,13 @@ SDA is a powerful tool for analyzing vibrational properties of materials from mo
 
 2.  **Create and activate a virtual environment (recommended):**
     ```bash
-    python3 -m venv sda_env
-    source sda_env/bin/activate  # On Linux/macOS
-    # sda_env\Scripts\activate    # On Windows
+    python3 -m venv psa_env
+    source psa_env/bin/activate  # On Linux/macOS
+    # psa_env\Scripts\activate    # On Windows
     ```
 
 3.  **Install the package in editable mode:**
-    This command installs the `sda` package from the `src` directory, allowing you to make changes to the source code that are immediately reflected.
+    This command installs the `psa` package from the `src` directory, allowing you to make changes to the source code that are immediately reflected.
     ```bash
     pip install -e .
     ```
@@ -50,11 +50,11 @@ SDA is a powerful tool for analyzing vibrational properties of materials from mo
 
 ## Quick Start: Programmatic Usage
 
-Here's how you can use the `sda` package programmatically. This example demonstrates a basic SED calculation and plot.
+Here's how you can use the `psa` package programmatically. This example demonstrates a basic SED calculation and plot.
 
 ```python
 from pathlib import Path
-from sda import TrajectoryLoader, SEDCalculator, SED, SEDPlotter
+from psa import TrajectoryLoader, SEDCalculator, SED, SEDPlotter
 
 # Ensure you have a trajectory file (e.g., "trajectory.lammpstrj")
 # in your working directory or provide the correct path.
@@ -75,7 +75,7 @@ atom_types_basis = [1,2] # Atom types for basis (e.g., for hBN)
 plot_max_freq = 50.0     # Max frequency for 2D plot (THz)
 
 # Create an output directory
-output_dir = Path("sda_readme_output")
+output_dir = Path("psa_readme_output")
 output_dir.mkdir(exist_ok=True)
 
 # Load trajectory
@@ -136,7 +136,7 @@ plotter = SEDPlotter(
     sed_obj_or_list=sed_obj,
     plot_type='2d_intensity',
     out_path_str=str(plot_path),
-    title=f'SDA Intensity Plot ({k_direction} direction)',
+    title=f'PSA Intensity Plot ({k_direction} direction)',
     direction_label=str(k_direction),
     max_freq=plot_max_freq
 )
@@ -148,25 +148,25 @@ For more detailed programmatic examples, see the scripts in the `examples/` dire
 
 ## Command-Line Interface (CLI)
 
-The `sda` package provides a command-line interface for running analyses using a configuration file.
+The `psa` package provides a command-line interface for running analyses using a configuration file.
 
 **Basic Usage:**
 
 After installation (`pip install -e .`), you can run the CLI tool from the project root:
 
 ```bash
-sda --trajectory path/to/your/trajectory.file --config path/to/your/config.yaml --output-dir path/to/output
+psa --trajectory path/to/your/trajectory.file --config path/to/your/config.yaml --output-dir path/to/output
 ```
 
 -   `--trajectory`: Path to your MD trajectory file (e.g., LAMMPS dump, VASP OUTCAR). **(Required)**
 -   `--config`: Path to your YAML configuration file. (Optional, uses defaults if not provided)
--   `--output-dir`: Directory where results will be saved (defaults to `sda_output`). (Optional)
+-   `--output-dir`: Directory where results will be saved (defaults to `psa_output`). (Optional)
 -   `--chiral`: Enable chiral SED analysis. This overrides the `chiral_mode_enabled` setting in the configuration file. (Optional flag)
 -   `--dt`: Override the MD simulation timestep (in picoseconds) specified in the configuration file. (Optional)
 -   `--nk`: Override the number of k-points (`n_kpoints`) for SED calculation specified in the configuration file. (Optional)
 -   `--recalculate-sed`: Force recalculation of SED data, even if cached `.npy` files exist. (Optional flag)
 
-Run `sda --help` for a full list of CLI options and their descriptions.
+Run `psa --help` for a full list of CLI options and their descriptions.
 
 ## Configuration File
 
@@ -239,7 +239,7 @@ A more comprehensive example configuration file, `hBN_monolayer_config.yaml`, ca
 
 ## Code Examples
 
-Runnable Python script examples demonstrating various features of the `sda` package can be found in the `examples/` directory:
+Runnable Python script examples demonstrating various features of the `psa` package can be found in the `examples/` directory:
 
 -   `basic_sed_analysis.py`: Demonstrates standard SED calculation and plotting.
 -   `chiral_sed_analysis.py`: Shows how to perform chiral SED.
@@ -261,7 +261,7 @@ pytest
 The full documentation is a work in progress and can be found in the `docs/` directory:
 
 -   `docs/api/`: Detailed API reference for modules and classes.
--   `docs/examples/`: (Planned) Example scripts and notebooks. (Note: current runnable examples are in `SDA_modular/examples/`)
+-   `docs/examples/`: (Planned) Example scripts and notebooks. (Note: current runnable examples are in `examples/`)
 -   `docs/guides/`: (Planned) User guides for common tasks.
 -   `docs/tutorials/`: (Planned) Step-by-step tutorials.
 

@@ -2,8 +2,8 @@
 """
 Basic SED Analysis Example
 
-This script demonstrates how to perform a basic Spectral Displacement Analysis (SDA)
-on a molecular dynamics trajectory.
+This script demonstrates how to perform a basic SED analysis
+on a molecular dynamics trajectory using the PSA package.
 """
 
 import os
@@ -14,7 +14,7 @@ import numpy as np
 # Add the parent directory to the Python path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from sda import TrajectoryLoader, SEDCalculator, SED, SEDPlotter
+from psa import TrajectoryLoader, SEDCalculator, SED, SEDPlotter
 
 def main():
     # Create output directory

@@ -1,6 +1,6 @@
-# SDA User Guide
+# PSA User Guide
 
-This guide provides detailed instructions for using the Spectral Displacement Analysis (SDA) package (`SDA_modular` version).
+This guide provides detailed instructions for using the Phonon Spectral Analysis (PSA) package (`PSA` version).
 
 ## Table of Contents
 
@@ -17,7 +17,7 @@ This guide provides detailed instructions for using the Spectral Displacement An
 
 ### Prerequisites
 
-Before installing the `sda` package, ensure you have:
+Before installing the `psa` package, ensure you have:
 
 - Python 3.8 or higher
 - NumPy
@@ -28,7 +28,7 @@ Before installing the `sda` package, ensure you have:
 
 ### Installation Steps
 
-1. Navigate to the `SDA_modular` root directory (where `setup.py` is located).
+1. Navigate to the `PSA` root directory (where `setup.py` is located).
 2. Install the package in editable mode. This allows you to use the package and also modify the source code if needed.
     ```bash
     pip install -e .
@@ -43,13 +43,13 @@ Before installing the `sda` package, ensure you have:
 
 ## Programmatic Usage (Library)
 
-This section covers how to use the `sda` package as a Python library in your own scripts.
+This section covers how to use the `psa` package as a Python library in your own scripts.
 
 ### Loading a Trajectory
 
 ```python
 from pathlib import Path
-from sda import TrajectoryLoader
+from psa import TrajectoryLoader
 
 # Ensure you have a trajectory file (e.g., "trajectory.lammpstrj")
 # For example:
@@ -75,7 +75,7 @@ print(f"Trajectory loaded: {trajectory.n_frames} frames, {trajectory.n_atoms} at
 ### Basic SED Analysis
 
 ```python
-from sda import SEDCalculator, SED # Assuming 'trajectory' is loaded from previous step
+from psa import SEDCalculator, SED # Assuming 'trajectory' is loaded from previous step
 
 # Initialize calculator
 # nx, ny, nz: number of primitive cells the simulation box corresponds to.
@@ -115,7 +115,7 @@ print("SED calculation complete.")
 ### Visualization
 
 ```python
-from sda import SEDPlotter # Assuming 'sed_data_obj' and 'output_dir' exist
+from psa import SEDPlotter # Assuming 'sed_data_obj' and 'output_dir' exist
 
 # Create 2D intensity plot
 plot_path = output_dir / "sed_intensity_user_guide.png"
@@ -132,21 +132,21 @@ print(f"Plot saved to {plot_path}")
 
 ## Command-Line Interface (CLI) Usage
 
-The `sda` package includes a command-line interface (CLI) for running analyses using a configuration file. After installing the package, you can invoke the CLI as follows:
+The `psa` package includes a command-line interface (CLI) for running analyses using a configuration file. After installing the package, you can invoke the CLI as follows:
 
 ```bash
-sda --trajectory path/to/your/trajectory.file --config path/to/your/config.yaml --output-dir path/to/output_directory
+psa --trajectory path/to/your/trajectory.file --config path/to/your/config.yaml --output-dir path/to/output_directory
 ```
 
 - `--trajectory`: Path to your MD trajectory file.
 - `--config`: Path to your YAML configuration file.
-- `--output-dir` (optional): Directory to save results (defaults to `sda_output`).
+- `--output-dir` (optional): Directory to save results (defaults to `psa_output`).
 
 Refer to the main `README.md` or `docs/api/README.md` for a detailed example of the `config.yaml` structure. The CLI script (`cli.py`) parses this file and runs the appropriate analysis steps.
 
 ## Trajectory Loading
 
-(`sda.io.TrajectoryLoader`)
+(`psa.io.TrajectoryLoader`)
 
 ### Supported File Formats
 
@@ -163,7 +163,7 @@ To speed up subsequent loading of the same trajectory, `TrajectoryLoader` can sa
 
 ## SED Calculation Details
 
-(`sda.core.SEDCalculator`)
+(`psa.core.SEDCalculator`)
 
 ### Basis Atom Selection
 For SED calculations, you can choose to include all atoms (default) or a subset:
@@ -203,7 +203,7 @@ For chiral SED analysis:
 
 ## Plotting and Visualization
 
-(`sda.visualization.SEDPlotter`)
+(`psa.visualization.SEDPlotter`)
 
 ### 2D Plots
 
@@ -251,7 +251,7 @@ For visualizing dispersion over a 2D k-space area (e.g., a plane in the BZ), you
 
 ## iSED Reconstruction Details
 
-(`sda.core.SEDCalculator.ised` method)
+(`psa.core.SEDCalculator.ised` method)
 
 iSED reconstructs and visualizes atomic motion corresponding to a specific \( (k, \omega) \) mode.
 

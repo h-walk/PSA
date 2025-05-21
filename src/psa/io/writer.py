@@ -1,5 +1,5 @@
 """
-Trajectory writing module for SDA.
+Trajectory writing module for PSA.
 
 This module provides functionality for writing trajectory data to various file formats
 and saving analysis results.

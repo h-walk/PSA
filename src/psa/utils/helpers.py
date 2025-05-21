@@ -1,7 +1,7 @@
 """
-Utility functions for SDA.
+Utility functions for PSA.
 
-This module provides helper functions for various SDA operations.
+This module provides helper functions for various PSA operations.
 """
 import numpy as np
 import logging

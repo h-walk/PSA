@@ -1,5 +1,5 @@
 """
-Spectral Displacement Analysis (SDA) Package
+Phonon Spectral Analysis (PSA) Package
 """
 
 __version__ = "0.1.0" # Consider linking this to setup.py version
@@ -28,7 +28,7 @@ from .utils.helpers import (
 from .utils.config_manager import ConfigManager # If it's intended for public API
 
 # Main CLI function (optional, if you want to allow programmatic execution of CLI)
-# from .cli import main as run_sda_cli
+# from .cli import main as run_psa_cli
 
 __all__ = [
     # Core
@@ -51,5 +51,5 @@ __all__ = [
     'validate_array_shape',
     'safe_divide',
     'ConfigManager',
-    # 'run_sda_cli' # Optional CLI exposure
+    # 'run_psa_cli' # Optional CLI exposure
 ]

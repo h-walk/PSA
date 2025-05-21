@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from sda.core.trajectory import Trajectory
+from psa.core.trajectory import Trajectory
 
 @pytest.fixture
 def valid_trajectory_data():

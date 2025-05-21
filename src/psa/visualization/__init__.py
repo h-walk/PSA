@@ -1,5 +1,5 @@
 """
-Visualization module for SDA.
+Visualization module for PSA.
 
 This module provides plotting capabilities for SED data.
 """

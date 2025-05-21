@@ -1,7 +1,7 @@
 """
-Plot styling module for SDA.
+Plot styling module for PSA.
 
-This module provides predefined styles and color schemes for SDA plots.
+This module provides predefined styles and color schemes for PSA plots.
 """
 import matplotlib.pyplot as plt
 import matplotlib as mpl

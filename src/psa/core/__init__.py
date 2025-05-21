@@ -1,7 +1,7 @@
 """
-Core module for SDA.
+Core module for PSA.
 
-This module provides the core data structures and calculation engines for SDA.
+This module provides the core data structures and calculation engines for PSA.
 """
 
 from .trajectory import Trajectory

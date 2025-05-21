@@ -1,5 +1,5 @@
 """
-Example script demonstrating the visualization capabilities of the SDA package.
+Example script demonstrating the visualization capabilities of the PSA package.
 """
 import numpy as np
 from pathlib import Path
@@ -9,7 +9,7 @@ import sys
 # Add the parent directory to the Python path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from sda import SED, SEDPlotter
+from psa import SED, SEDPlotter
 
 def create_sample_sed_data():
     """Create sample SED data for demonstration."""

@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from sda.utils.helpers import parse_direction
+from psa.utils.helpers import parse_direction
 
 # Test cases for string inputs
 @pytest.mark.parametrize("input_str, expected_output", [

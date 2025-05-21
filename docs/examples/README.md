@@ -1,17 +1,17 @@
-# SDA Examples Snippets
+# PSA Examples Snippets
 
-This document provides illustrative code snippets for using the `sda` package. For complete, runnable example scripts, please refer to the files in the `SDA_modular/examples/` directory at the root of the project.
+This document provides illustrative code snippets for using the `psa` package. For complete, runnable example scripts, please refer to the files in the `PSA/examples/` directory at the root of the project.
 
 ## Basic Operations
 
-These snippets assume you have already loaded a trajectory into a `trajectory` variable (see `docs/guides/user_guide.md` or `SDA_modular/examples/basic_sed_analysis.py`).
+These snippets assume you have already loaded a trajectory into a `trajectory` variable (see `docs/guides/user_guide.md` or `PSA/examples/basic_sed_analysis.py`).
 
 ### 1. Basic SED Calculation and Plotting
 
 ```python
 from pathlib import Path # For output paths
 import numpy as np # For np.isin if used in atom selection later
-from sda import TrajectoryLoader, SEDCalculator, SED, SEDPlotter
+from psa import TrajectoryLoader, SEDCalculator, SED, SEDPlotter
 
 # --- Assume trajectory is loaded as 'trajectory' ---
 # Example:
@@ -244,4 +244,4 @@ ised:
   # ... and other iSED settings ...
 ```
 
-This configuration is used by the `sda` command-line tool. See `sda --help` for more details.
+This configuration is used by the `psa` command-line tool. See `psa --help` for more details.

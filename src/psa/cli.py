@@ -5,17 +5,17 @@ import numpy as np
 import logging
 from typing import List
 
-# from sda.core.trajectory import Trajectory # This import seems unused in the main() context now
-from sda.io.loader import TrajectoryLoader # Corrected path
-from sda.core.sed_calculator import SEDCalculator
-from sda.core.sed import SED
-from sda.visualization.plotter import SEDPlotter
-# from sda.utils.config_loader import update_dict_recursively # Old import
-from sda.utils.helpers import update_dict_recursively # Corrected path
+# from psa.core.trajectory import Trajectory # This import seems unused in the main() context now
+from psa.io.loader import TrajectoryLoader # Corrected path
+from psa.core.sed_calculator import SEDCalculator
+from psa.core.sed import SED
+from psa.visualization.plotter import SEDPlotter
+# from psa.utils.config_loader import update_dict_recursively # Old import
+from psa.utils.helpers import update_dict_recursively # Corrected path
 
 logger = logging.getLogger(__name__)
 
-# Basic logging configuration (moved from original SDA.py)
+# Basic logging configuration (moved from original PSA.py)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -23,10 +23,10 @@ logging.basicConfig(
 )
 
 def main():
-    parser = argparse.ArgumentParser(description='Spectral Displacement Analysis Tool.')
+    parser = argparse.ArgumentParser(description='Phonon Spectral Analysis Tool.')
     parser.add_argument('--trajectory', type=str, required=True, help='Path to MD trajectory file.')
     parser.add_argument('--config', type=str, help='Path to YAML configuration file.')
-    parser.add_argument('--output-dir', type=str, default='sda_output', help='Directory for results.')
+    parser.add_argument('--output-dir', type=str, default='psa_output', help='Directory for results.')
     parser.add_argument('--chiral', action='store_true', help='Enable chiral SED (overrides config).')
     parser.add_argument('--dt', type=float, help="Override MD timestep from config (ps).")
     parser.add_argument('--nk', type=int, help="Override n_kpoints for SED from config.")
@@ -182,7 +182,7 @@ def main():
                 dump_filepath=str(out_dir / ised_recon_cfg['output_dump_filename']),
                 plot_dir_ised=out_dir, plot_max_freq=max_freq_for_ised_plot
             )
-        logger.info("SDA processing completed.")
+        logger.info("PSA processing completed.")
 
     except FileNotFoundError as e: logger.error(f"File Error: {e}"); raise SystemExit(1)
     except ValueError as e: logger.error(f"Value Error: {e}"); raise SystemExit(1)

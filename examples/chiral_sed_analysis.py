@@ -2,8 +2,8 @@
 """
 Chiral SED Analysis Example
 
-This script demonstrates how to perform chiral Spectral Displacement Analysis (SDA)
-on a molecular dynamics trajectory, including phase calculation and visualization.
+This script demonstrates how to perform chiral SED analysis
+on a molecular dynamics trajectory using the PSA package, including phase calculation and visualization.
 """
 
 import os
@@ -14,7 +14,7 @@ import numpy as np # Added for frequency printout
 # Add the parent directory to the Python path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from sda import TrajectoryLoader, SEDCalculator, SED, SEDPlotter
+from psa import TrajectoryLoader, SEDCalculator, SED, SEDPlotter
 
 def main():
     # Create output directory
