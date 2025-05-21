@@ -103,6 +103,61 @@ class SEDCalculator:
         k_vecs = np.outer(k_mags, k_dir_unit).astype(np.float32)
         return k_mags, k_vecs
 
+    def get_k_grid(self, 
+                   plane: str, 
+                   k_range_x: Tuple[float, float], 
+                   k_range_y: Tuple[float, float], 
+                   n_kx: int, 
+                   n_ky: int, 
+                   k_fixed_val: float = 0.0
+                   ) -> Tuple[np.ndarray, np.ndarray, Tuple[int, int]]:
+        """
+        Generates a 2D grid of k-points in a specified plane.
+
+        Args:
+            plane: The plane for the k-grid, e.g., "xy", "yz", "zx".
+            k_range_x: Tuple (min_kx, max_kx) for the first dimension of the plane.
+            k_range_y: Tuple (min_ky, max_ky) for the second dimension of the plane.
+            n_kx: Number of k-points along the first dimension.
+            n_ky: Number of k-points along the second dimension.
+            k_fixed_val: Value of the k-component perpendicular to the plane (e.g., kz for "xy" plane).
+
+        Returns:
+            Tuple of (k_magnitudes, k_vectors_3d, k_grid_shape).
+            k_magnitudes: An empty 1D numpy array (as magnitudes are not well-defined for a grid point by point).
+            k_vectors_3d: 2D array of 3D k-vectors (2π/Å), shape (n_kx * n_ky, 3).
+            k_grid_shape: Tuple (n_kx, n_ky) indicating the grid dimensions.
+        """
+        if n_kx <= 0 or n_ky <= 0:
+            raise ValueError("Number of k-points (n_kx, n_ky) must be positive.")
+
+        kx_vals = np.linspace(k_range_x[0], k_range_x[1], n_kx, dtype=np.float32)
+        ky_vals = np.linspace(k_range_y[0], k_range_y[1], n_ky, dtype=np.float32)
+
+        k_vectors_list = []
+        if plane.lower() == "xy":
+            for kx in kx_vals:
+                for ky in ky_vals:
+                    k_vectors_list.append([kx, ky, k_fixed_val])
+        elif plane.lower() == "yz":
+            for ky in kx_vals: # Note: kx_vals corresponds to the first range, which is y for yz plane
+                for kz in ky_vals: # Note: ky_vals corresponds to the second range, which is z for yz plane
+                    k_vectors_list.append([k_fixed_val, ky, kz])
+        elif plane.lower() == "zx":
+            for kz in kx_vals: # Note: kx_vals corresponds to the first range, which is z for zx plane
+                for kx in ky_vals: # Note: ky_vals corresponds to the second range, which is x for zx plane
+                    k_vectors_list.append([kx, k_fixed_val, kz])
+        else:
+            raise ValueError(f"Invalid plane specified: {plane}. Must be 'xy', 'yz', or 'zx'.")
+
+        k_vectors_3d = np.array(k_vectors_list, dtype=np.float32)
+        k_grid_shape = (n_kx, n_ky)
+        
+        # For k_points (1D representation), return an empty array as it's not directly applicable here.
+        # The main k-point information is in k_vectors_3d and k_grid_shape.
+        k_mags_for_grid = np.array([], dtype=np.float32) 
+        return k_mags_for_grid, k_vectors_3d, k_grid_shape
+
     def calculate(self, k_points_mags: np.ndarray, k_vectors_3d: np.ndarray,
                   basis_atom_indices: Optional[Union[List[int], List[List[int]], np.ndarray]] = None,
                   basis_atom_types: Optional[Union[List[int], List[List[int]]]] = None,

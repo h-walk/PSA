@@ -37,6 +37,8 @@ class SEDPlotter:
             'dpi': 300,
             'max_freq': None,
             'target_frequency': 1.0, # Default target frequency for frequency_slice
+            'heatmap_target_freq_thz': 1.0, # Default target frequency for 2D heatmap (now 3D heatmap)
+            'heatmap_plane': 'xy', # Default plane for 2D heatmap (now 3D heatmap): 'xy', 'yz', or 'zx'
             'k_index': None, # For 1d_slice
             'freq_index': None, # For 1d_slice
             'highlight_region': None,
@@ -54,64 +56,66 @@ class SEDPlotter:
         # Update with user parameters
         self.plot_params = {**self.default_params, **kwargs}
         
-    def generate_plot(self) -> None:
-        fig, ax = None, None
-        
+    def generate_plot(self):
+        self._validate() # Call validate at the beginning
+        fig = None
+        ax = None # Initialize ax as well
+
         # Apply theme settings to matplotlib's rcParams
+        # This theming block seems to be from a different version, let's ensure it is present or add it.
+        # For safety, I'll ensure it is present based on the earlier file read.
         theme = self.plot_params.get('theme', 'light')
+        current_style_context = None # To manage style context
+
         if theme == 'dark':
-            plt.style.use('dark_background')
-            plt.rcParams['axes.facecolor'] = 'black'
-            plt.rcParams['xtick.color'] = 'white'
-            plt.rcParams['ytick.color'] = 'white'
-            plt.rcParams['text.color'] = 'white'
-            plt.rcParams['axes.labelcolor'] = 'white'
+            current_style_context = plt.style.context('dark_background')
+            current_style_context.__enter__() # Apply the style
+            # Further dark theme specific rcParams can be set here if needed
+            # e.g., plt.rcParams['axes.facecolor'] = 'black' etc.
+            # However, _setup_ax_style should handle most visual styling based on theme.
         else:
-            plt.style.use('default')
-            plt.rcParams['axes.facecolor'] = 'white'
-            plt.rcParams['xtick.color'] = 'black'
-            plt.rcParams['ytick.color'] = 'black'
-            plt.rcParams['text.color'] = 'black'
-            plt.rcParams['axes.labelcolor'] = 'black'
+            # For light theme, we might want to ensure a default style if not dark
+            # Or rely on _setup_ax_style to set colors appropriately.
+            # If plt.style.use('default') is desired for light theme, it can be here.
+            # current_style_context = plt.style.context('default') # Example
+            # if current_style_context: current_style_context.__enter__()
+            pass # Rely on _setup_ax_style for light theme specifics
 
-        plot_method_name = f"_plot_{self.plot_type}"
+        try:
+            if self.plot_type == '2d_intensity' and isinstance(self.sed, SED):
+                fig, ax = self._plot_2d_intensity()
+            elif self.plot_type == '2d_phase' and isinstance(self.sed, SED):
+                fig, ax = self._plot_2d_phase(self.sed) # Assuming sed_item is self.sed
+            elif self.plot_type == '3d_heatmap' and isinstance(self.sed, SED):
+                fig, ax = self._plot_3d_heatmap()
+            elif self.plot_type == '1d_slice' and isinstance(self.sed, SED):
+                fig, ax = self._plot_1d_slice()
+            elif self.plot_type == 'frequency_slice' and isinstance(self.sed, SED):
+                fig, ax = self._plot_frequency_slice()
+            # Add other plot types here if they exist or are added
+            # else:
+            #     logger.error(f"Plot type '{self.plot_type}' is recognized but not handled in generate_plot logic.")
 
-        if hasattr(self, plot_method_name) and callable(getattr(self, plot_method_name)):
-            plot_method = getattr(self, plot_method_name)
-            if self.plot_type.startswith("2d_"):
-                # Assuming 2D plots take no extra args for now
-                fig, ax = plot_method()
-            elif self.plot_type.startswith("3d_"):
-                # Placeholder for 3D if it also returns fig, ax
-                logger.warning(f"Plot type {self.plot_type} might require specific argument handling in generate_plot.")
-                # Fallback or raise error if not handled
-                raise ValueError(f"Plot type {self.plot_type} not fully supported in generate_plot yet.")
+            if fig: # Proceed only if a figure was generated
+                if self.plot_params.get('tight_layout', True):
+                    fig.tight_layout()
+                
+                self.output_path.parent.mkdir(parents=True, exist_ok=True)
+                # Use bbox_inches='tight' to prevent labels from being cut off
+                fig.savefig(self.output_path, dpi=self.plot_params.get('dpi', 300), bbox_inches='tight')
+                logger.info(f"Plot saved to: {self.output_path}")
             else:
-                # If a plot_method exists but isn't explicitly handled (e.g. not "2d_" or "3d_")
-                # fig and ax will remain None, which is handled by the 'if fig:' check later.
-                # Or, we could attempt to call it if it has a standard signature:
-                # try:
-                #     fig, ax = plot_method()
-                # except Exception as e:
-                #     logger.error(f"Error calling unhandled plot method {plot_method_name}: {e}")
-                # For now, let fig, ax remain None if not 2d/3d
-                pass
-        else:
-            # This is where the original SyntaxError was reported.
-            # This 'else' corresponds to 'if hasattr...'
-            raise ValueError(f"Unknown or non-callable plot type / method: {self.plot_type} (method: {plot_method_name})")
-            
-        if fig: # Proceed only if a figure was generated
-            if self.plot_params.get('tight_layout', True): # Use get for safety
-                fig.tight_layout()
-            
-            self.output_path.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(self.output_path, dpi=self.plot_params.get('dpi', 300), bbox_inches='tight')
-            plt.close(fig) # Close the figure to free memory
-            logger.info(f"Plot saved to: {self.output_path}")
-        else:
-            logger.warning(f"Plot generation for {self.plot_type} did not return a figure. Output file {self.output_path} not created.")
+                # Log if no figure was produced, e.g. due to data issues handled in plot methods
+                logger.warning(f"Plot generation for {self.plot_type} did not return a figure. Output file {self.output_path} not created.")
         
+        finally:
+            if current_style_context:
+                current_style_context.__exit__(None, None, None) # Revert style changes
+            if fig: # Ensure figure is closed only if it was created
+                plt.close(fig) # Close the figure to free memory
+            elif ax: # If ax was created but not fig (e.g. error before fig assigned to)
+                if ax.figure: plt.close(ax.figure)
+
     def _plot_2d_intensity(self) -> Tuple[Optional[plt.Figure], Optional[plt.Axes]]:
         """Generate 2D intensity plot of SED data."""
         fig, ax = plt.subplots(figsize=self.plot_params['figsize'], dpi=self.plot_params.get('dpi', 300))
@@ -426,7 +430,7 @@ class SEDPlotter:
         return fig, ax
 
     def _validate(self):
-        valid_types = ['2d_intensity', '2d_phase', '3d_intensity', '3d_phase', '1d_slice', 'frequency_slice']
+        valid_types = ['2d_intensity', '2d_phase', '1d_slice', 'frequency_slice', '3d_heatmap']
         if self.plot_type not in valid_types:
             # Try to check if it's a method like _plot_<type_name>
             plot_method_name = f"_plot_{self.plot_type}"
@@ -434,21 +438,18 @@ class SEDPlotter:
                  raise ValueError(f"Invalid plot_type '{self.plot_type}'. Choose from {valid_types} or ensure a corresponding _plot_{self.plot_type} method exists.")
         
         # Common checks for SED object
-        if not isinstance(self.sed, SED) and not (self.plot_type.startswith("3d_") and isinstance(self.sed, list)):
-             raise TypeError(f"Plot type {self.plot_type} expects SED object or list for 3D, got {type(self.sed)}")
+        if not isinstance(self.sed, SED):
+             raise TypeError(f"Plot type {self.plot_type} expects SED object, got {type(self.sed)}")
 
         if isinstance(self.sed, SED):
-            if any(getattr(self.sed, attr, None) is None for attr in ['sed', 'freqs', 'k_points']):
-                logger.warning(f"SED obj for plot {self.output_path.name} (type: {self.plot_type}) missing essential data (sed, freqs, or k_points). Plot may fail/be empty.")
-        
-        # Specific checks for 3D plots
-        if self.plot_type.startswith('3d_'):
-            if not isinstance(self.sed, list): 
-                raise TypeError(f"3D plots need list of SED objects, got {type(self.sed)}")
-            if not self.sed: 
-                logger.warning(f"3D plot {self.output_path.name}: sed_data list is empty. No plot will be generated.")
-            elif not all(isinstance(s, SED) for s in self.sed): 
-                raise TypeError("3D plots: sed_data list must contain SED objects.")
+            if any(getattr(self.sed, attr, None) is None for attr in ['sed', 'freqs', 'k_points', 'k_vectors']):
+                logger.warning(f"SED obj for plot {self.output_path.name} (type: {self.plot_type}) missing essential data (sed, freqs, k_points, or k_vectors). Plot may fail/be empty.")
+            if self.plot_type == '3d_heatmap':
+                if getattr(self.sed, 'k_grid_shape', None) is None or not isinstance(self.sed.k_grid_shape, tuple) or len(self.sed.k_grid_shape) != 2:
+                    raise ValueError("For '3d_heatmap', SED.k_grid_shape must be a 2-tuple (e.g., (nkx, nky)).")
+                plane = self.plot_params.get('heatmap_plane', 'xy').lower()
+                if plane not in ['xy', 'yz', 'zx']:
+                    raise ValueError(f"Invalid 'heatmap_plane': {plane}. Must be 'xy', 'yz', or 'zx'.")
 
     def _setup_ax_style(self, fig, ax, is_3d=False):
         theme = self.plot_params.get('theme', 'light')
@@ -503,8 +504,11 @@ class SEDPlotter:
             if hasattr(ax, 'zaxis'): 
                 ax.tick_params(axis='z', colors=tick_color)
                 ax.zaxis.label.set_color(label_color)
-        else: 
-            ax.grid(True, alpha=0.7 if theme == 'light' else 0.3, linestyle=':', color=grid_color)
+        else: # For 2D plots, respect the 'grid' parameter, defaulting to True if not specified for general 2D plots.
+            if self.plot_params.get('grid', True): # Default to True for general 2D plots
+                ax.grid(True, alpha=0.7 if theme == 'light' else 0.3, linestyle=':', color=grid_color)
+            else:
+                ax.grid(False) # Explicitly turn off if grid=False
         
         # Apply title color for all plot types, as title is set within plot methods
         # This ensures title color is consistent with the theme
@@ -567,126 +571,177 @@ class SEDPlotter:
         cbar.ax.tick_params(colors=self.plot_params.get('cbar_tick_color', 'white' if self.plot_params.get('theme','light') == 'dark' else 'black'))
         return fig, ax
 
-    def _gather_3d_data(self, sed_list_items: List[SED], data_mode: str):
-        kx_all, ky_all, freq_all, color_all = [], [], [], []
-        intensity_thresh_rel = self.plot_params.get('intensity_thresh_rel_gather', 0.05)
+    def _plot_3d_heatmap(self) -> Tuple[Optional[plt.Figure], Optional[plt.Axes]]:
+        """
+        Plots a 2D heatmap of SED intensity on a specified k-plane (xy, yz, or zx)
+        at a selected frequency.
+        """
+        fig, ax = plt.subplots(figsize=self.plot_params.get('figsize', (8, 6.5)))
+        self._setup_ax_style(fig, ax, is_3d=False) # Heatmap is 2D
+        ax.grid(False) # Ensure grid is off by default for heatmaps
 
-        for sed_obj_item in sed_list_items:
-            if data_mode == 'phase':
-                if any(getattr(sed_obj_item, attr) is None for attr in ['phase', 'freqs', 'k_vectors']): 
-                    continue
-                pos_freq_mask = sed_obj_item.freqs >= 0
-                plot_f_dir = sed_obj_item.freqs[pos_freq_mask]
-                plot_d_dir = sed_obj_item.phase[pos_freq_mask,:] if sed_obj_item.phase.ndim==2 and sed_obj_item.phase.shape[0]==sed_obj_item.freqs.shape[0] else sed_obj_item.phase
-                if not (plot_f_dir.size > 0 and sed_obj_item.k_vectors.shape[0] > 0 and plot_d_dir.size > 0 and \
-                        plot_d_dir.shape[1] == sed_obj_item.k_vectors.shape[0]): 
-                    continue
-
-                for i_f, f_val in enumerate(plot_f_dir):
-                    for i_k, k_v in enumerate(sed_obj_item.k_vectors):
-                        if k_v.size >= 2: 
-                            kx_all.append(k_v[0])
-                            ky_all.append(k_v[1])
-                            freq_all.append(f_val)
-                            color_all.append(plot_d_dir[i_f,i_k])
-            elif data_mode == 'intensity':
-                kx_d, ky_d, fq_d, amp_d = sed_obj_item.gather_3d(intensity_thresh_rel=intensity_thresh_rel)
-                if kx_d.size > 0: 
-                    kx_all.extend(kx_d)
-                    ky_all.extend(ky_d)
-                    freq_all.extend(fq_d)
-                    color_all.extend(amp_d)
-        
-        return (np.array(kx_all,dtype=np.float32), np.array(ky_all,dtype=np.float32),
-                np.array(freq_all,dtype=np.float32), np.array(color_all,dtype=np.float32))
-
-    def _plot_3d(self, kx, ky, freqs, color_data, data_mode: str):
-        if kx.size == 0: 
-            logger.warning(f"No data for 3D {data_mode} plot {self.output_path.name}.")
-            return None, None
-        
-        fig = plt.figure(figsize=(12,10))
-        ax = fig.add_subplot(111, projection='3d')
-        self._setup_ax_style(fig, ax, is_3d=True)
-        
-        z_data = freqs if self.plot_params.get('kz_vals') is None else self.plot_params.get('kz_vals')
-        cmap, cbar_lbl = 'inferno', 'Intensity (arb.)'
-        plot_c = color_data.copy()
-        vmin, vmax = None, None
-
-        if data_mode == 'phase': 
-            cmap, cbar_lbl = 'coolwarm_r', 'Phase Diff (rad)'
-            vmin, vmax = -np.pi/2, np.pi/2
-        elif data_mode == 'intensity':
-            if self.plot_params.get('intensity_log_scale',True) and plot_c.size > 0:
-                pos_mask = plot_c > 1e-12
-                if np.any(pos_mask): 
-                    plot_c[pos_mask] = np.log10(plot_c[pos_mask])
-                    plot_c[~pos_mask] = np.nan
-                    cbar_lbl = 'Log10(Intensity)'
-                else: 
-                    logger.warning("3D intensity log scale: no positive values. Using linear.")
-            
-            valid_c = plot_c[~np.isnan(plot_c)]
-            if valid_c.size > 0: 
-                vmin, vmax = np.percentile(valid_c,5), np.percentile(valid_c,98)
-            if vmax is not None and vmin is not None and vmax <= vmin: 
-                vmax = vmin + (1e-9 if not np.isinf(vmin) else 1e-9)
-            elif valid_c.size == 0: 
-                vmin, vmax = 0, 1
-        
-        nan_mask = np.isnan(plot_c)
-        if np.all(nan_mask) and kx.size > 0: 
-            logger.warning(f"All color data NaN for 3D {data_mode} plot. Plotting gray.")
-            kx_p, ky_p, z_p, c_p = kx, ky, z_data, 'gray'
-            cmap = None 
-        elif np.any(nan_mask):
-            logger.debug(f"Filtered {np.sum(nan_mask)} NaN color points for 3D scatter.")
-            kx_p, ky_p, z_p, c_p = kx[~nan_mask], ky[~nan_mask], z_data[~nan_mask], plot_c[~nan_mask]
-            if kx_p.size == 0: 
-                logger.warning(f"No non-NaN data for 3D {data_mode} scatter.")
-                return None, None
-        else: 
-            kx_p, ky_p, z_p, c_p = kx, ky, z_data, plot_c
-
-        if kx_p.size == 0: 
-            logger.warning(f"No points to scatter for 3D {data_mode} plot {self.output_path.name}.")
-            return None, None
-            
-        sc = ax.scatter(kx_p, ky_p, z_p, c=c_p, cmap=cmap, alpha=0.6, marker='o', 
-                       s=15, edgecolors='none', vmin=vmin, vmax=vmax)
-        ax.set_xlabel(r'$k_x$ ($2\pi/\AA$)')
-        ax.set_ylabel(r'$k_y$ ($2\pi/\AA$)')
-        ax.set_zlabel('Frequency (THz)' if self.plot_params.get('kz_vals') is None else r'$k_z$ ($2\pi/\AA$)')
-        
-        if cmap and hasattr(sc,'get_array') and sc.get_array().size > 0 and not isinstance(c_p,str): 
-            cbar = plt.colorbar(sc, ax=ax, shrink=0.75, aspect=20, pad=0.1)
-            cbar.set_label(cbar_lbl, color=self.plot_params.get('cbar_label_color', 'white' if self.plot_params.get('theme','light') == 'dark' else 'black'), fontsize=10)
-            cbar.ax.tick_params(colors=self.plot_params.get('cbar_tick_color', 'white' if self.plot_params.get('theme','light') == 'dark' else 'black'), labelsize=9)
-
-        plot_title_str = self.plot_params['title']
-        ax.set_title(plot_title_str, color=self.plot_params.get('title_color', 'white' if self.plot_params.get('theme','light') == 'dark' else 'black'), fontsize=14)
-        return fig, ax
-
-    def generate_plot(self):
-        fig = None
-        if self.plot_type == '2d_intensity' and isinstance(self.sed, SED): 
-            fig, _ = self._plot_2d_intensity()
-        elif self.plot_type == '2d_phase' and isinstance(self.sed, SED): 
-            fig, _ = self._plot_2d_phase(self.sed)
-        elif self.plot_type.startswith('3d_') and isinstance(self.sed, list) and self.sed:
-            mode = 'intensity' if self.plot_type == '3d_intensity' else 'phase'
-            kx_all, ky_all, f_all, c_all = self._gather_3d_data(self.sed, mode)
-            if kx_all.size > 0: 
-                fig, _ = self._plot_3d(kx_all, ky_all, f_all, c_all, mode)
-            else: 
-                logger.warning(f"No data gathered for {self.plot_type} plot: {self.output_path.name}")
-        
-        if fig:
-            self.output_path.parent.mkdir(parents=True, exist_ok=True)
-            fig.tight_layout()
-            fig.savefig(self.output_path, dpi=self.plot_params.get('dpi', 300), bbox_inches='tight')
+        if self.sed.k_grid_shape is None or len(self.sed.k_grid_shape) != 2:
+            logger.error("SED.k_grid_shape is not valid for 3D heatmap.")
             plt.close(fig)
-            logger.info(f"Plot saved: {self.output_path.name}")
-        else: 
-            logger.info(f"Plot generation skipped for {self.output_path.name} (no figure/data).") 
+            return None, None
+
+        target_freq_thz = self.plot_params.get('heatmap_target_freq_thz', 1.0)
+        plane = self.plot_params.get('heatmap_plane', 'xy').lower()
+
+        # Find the closest frequency index
+        if self.sed.freqs is None or self.sed.freqs.size == 0:
+            logger.error("SED object has no frequency data for 3D heatmap.")
+            plt.close(fig)
+            return None, None
+        
+        freq_idx = np.argmin(np.abs(self.sed.freqs - target_freq_thz))
+        actual_freq = self.sed.freqs[freq_idx]
+        logger.info(f"Plotting 3D heatmap for frequency {actual_freq:.3f} THz (target was {target_freq_thz:.3f} THz).")
+
+        # Calculate intensity for the selected frequency slice
+        if self.sed.is_complex:
+            intensity_at_freq = np.sum(np.abs(self.sed.sed[freq_idx, :, :])**2, axis=-1)
+        else:
+            if self.sed.sed.ndim == 3: # (n_freqs, n_kpoints, n_polarizations_summed)
+                 intensity_at_freq = np.sum(self.sed.sed[freq_idx, :, :], axis=-1)
+            elif self.sed.sed.ndim == 2: # (n_freqs, n_kpoints) - already intensity
+                 intensity_at_freq = self.sed.sed[freq_idx, :]
+            else:
+                logger.error(f"Unsupported SED data format for 3D heatmap: ndim={self.sed.sed.ndim}")
+                plt.close(fig)
+                return None, None
+        
+        if intensity_at_freq.size != self.sed.k_vectors.shape[0]:
+            logger.error(f"Intensity data size ({intensity_at_freq.size}) does not match number of k-vectors ({self.sed.k_vectors.shape[0]}).")
+            plt.close(fig)
+            return None, None
+
+        # Reshape intensity to grid
+        n_kx, n_ky = self.sed.k_grid_shape
+        if intensity_at_freq.size != n_kx * n_ky:
+            logger.error(f"Intensity data size ({intensity_at_freq.size}) does not match k_grid_shape ({n_kx}x{n_ky}={n_kx*n_ky}).")
+            plt.close(fig)
+            return None, None
+        intensity_grid = intensity_at_freq.reshape(self.sed.k_grid_shape)
+
+        # Extract k-components for the specified plane
+        k_vectors_flat = self.sed.k_vectors # Shape (nkx*nky, 3)
+        if plane == "xy":
+            k_comp1_flat = k_vectors_flat[:, 0]
+            k_comp2_flat = k_vectors_flat[:, 1]
+            xlabel = r'$k_x$ ($2\pi/\AA$)'
+            ylabel = r'$k_y$ ($2\pi/\AA$)'
+        elif plane == "yz":
+            k_comp1_flat = k_vectors_flat[:, 1]
+            k_comp2_flat = k_vectors_flat[:, 2]
+            xlabel = r'$k_y$ ($2\pi/\AA$)'
+            ylabel = r'$k_z$ ($2\pi/\AA$)'
+        elif plane == "zx":
+            k_comp1_flat = k_vectors_flat[:, 2] # k_comp1 is z
+            k_comp2_flat = k_vectors_flat[:, 0] # k_comp2 is x
+            xlabel = r'$k_z$ ($2\pi/\AA$)'
+            ylabel = r'$k_x$ ($2\pi/\AA$)'
+        else: # Should be caught by _validate, but as a safeguard
+            logger.error(f"Invalid plane '{plane}' in _plot_3d_heatmap.")
+            plt.close(fig)
+            return None, None
+
+        # Create meshgrid for k-components. We need unique sorted values for contourf/pcolormesh.
+        # The k_vectors are generated by iterating kx then ky (for xy plane).
+        # So, k_comp1_flat.reshape(n_kx, n_ky) would have kx varying along columns, ky along rows.
+        # k_comp1_vals = np.unique(k_comp1_flat) # Should be n_kx unique values
+        # k_comp2_vals = np.unique(k_comp2_flat) # Should be n_ky unique values
+
+        # For pcolormesh, X and Y define the corners of the cells.
+        # If k_comp1_flat was, e.g., kx from SEDCalculator.get_k_grid (plane='xy')
+        # kx_vals = np.linspace(k_range_x[0], k_range_x[1], n_kx)
+        # ky_vals = np.linspace(k_range_y[0], k_range_y[1], n_ky)
+        # k_vectors_list.append([kx, ky, k_fixed_val]) for kx in kx_vals for ky in ky_vals
+        # This means k_vectors_flat[:,0] = np.tile(kx_vals, n_ky) which is not what we want for meshgrid directly.
+        # And k_vectors_flat[:,1] = np.repeat(ky_vals, n_kx)
+        
+        # Let's get the unique sorted kx and ky values that form the grid axes
+        # Based on how get_k_grid creates k_vectors_list for 'xy':
+        # kx changes fastest in the flattened k_vectors_list if the inner loop is ky:
+        #   for kx in kx_vals: for ky in ky_vals: append([kx,ky,kz]) -> k_vectors_3d.reshape(nkx,nky,3)
+        #   then k_vectors_3d[:,:,0] is kx, k_vectors_3d[:,:,1] is ky
+        # If the loops are: for kx in kx_vals: for ky in ky_vals:
+        #   k_comp1_flat (kx) will be [kx0, kx0, ..., kx0 (nky times), kx1, kx1, ...]
+        #   k_comp2_flat (ky) will be [ky0, ky1, ..., ky(nky-1), ky0, ky1, ...]
+        
+        # Let's reconstruct the axis vectors
+        k1_axis = np.unique(k_comp1_flat) # e.g. unique kx values
+        k2_axis = np.unique(k_comp2_flat) # e.g. unique ky values
+
+        if len(k1_axis) != n_kx or len(k2_axis) != n_ky:
+             logger.warning(f"Mismatch in unique k-component values and k_grid_shape. Expected ({n_kx}, {n_ky}), got ({len(k1_axis)}, {len(k2_axis)}). This might affect plot axes.")
+             # Fallback, assuming they are sorted correctly from linspace if unique fails
+             if len(k1_axis) != n_kx: k1_axis = np.linspace(k_comp1_flat.min(), k_comp1_flat.max(), n_kx)
+             if len(k2_axis) != n_ky: k2_axis = np.linspace(k_comp2_flat.min(), k_comp2_flat.max(), n_ky)
+
+
+        K1, K2 = np.meshgrid(k1_axis, k2_axis) # K1 will be kx, K2 will be ky if plane is xy
+
+        # The intensity_grid is (n_kx, n_ky).
+        # If K1 from meshgrid(kx_axis, ky_axis) has shape (n_ky, n_kx)
+        # and K2 has shape (n_ky, n_kx)
+        # then intensity_grid needs to be transposed if it's (n_kx, n_ky) for pcolormesh.
+        # Let's check pcolormesh docs: C has to be (ny, nx) if X,Y are (ny,nx) or (ny+1,nx+1)
+        # Our meshgrid(k1_axis, k2_axis) makes K1, K2 shapes (len(k2_axis), len(k1_axis))
+        # i.e. (n_ky, n_kx)
+        # So, intensity_grid, which is (n_kx, n_ky), needs to be intensity_grid.T for pcolormesh.
+        
+        plot_intensity_data = intensity_grid.T # Transpose to match meshgrid (n_ky, n_kx)
+
+        current_colorbar_label = self.plot_params['colorbar_label']
+        if self.plot_params['log_intensity']:
+            if np.any(plot_intensity_data > 1e-12):
+                plot_intensity_data = np.log10(np.maximum(plot_intensity_data, 1e-12))
+                current_colorbar_label = 'Log10(Intensity)'
+            else:
+                logger.warning("Log scaling requested, but all values too small. Using linear scale.")
+
+        # Determine vmin and vmax for the color scale
+        # Prioritize vmin/vmax if directly provided in plot_params
+        vmin = self.plot_params.get('vmin')
+        vmax = self.plot_params.get('vmax')
+
+        if vmin is None or vmax is None: # If not directly provided, calculate from percentiles of current slice
+            valid_intensity_values = plot_intensity_data[~np.isnan(plot_intensity_data) & ~np.isinf(plot_intensity_data)]
+            if valid_intensity_values.size > 0:
+                calculated_vmin = np.percentile(valid_intensity_values, self.plot_params.get('vmin_percentile', 0.0))
+                calculated_vmax = np.percentile(valid_intensity_values, self.plot_params.get('vmax_percentile', 100.0))
+                
+                if calculated_vmin == calculated_vmax: # Handle flat data
+                    calculated_vmin = calculated_vmin - 0.1 if calculated_vmin != 0 else -0.1
+                    calculated_vmax = calculated_vmax + 0.1 if calculated_vmax != 0 else 0.1
+                
+                if vmin is None:
+                    vmin = calculated_vmin
+                if vmax is None:
+                    vmax = calculated_vmax
+            else: # No valid data to calculate percentiles, use safe defaults if vmin/vmax still None
+                if vmin is None: vmin = 0
+                if vmax is None: vmax = 1
+        
+        pcm = ax.pcolormesh(K1, K2, plot_intensity_data,
+                            cmap=self.plot_params['cmap'],
+                            shading='gouraud',
+                            vmin=vmin, vmax=vmax)
+
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        title = self.plot_params.get('title', 'SED Heatmap')
+        ax.set_title(f"{title} @ {actual_freq:.2f} THz (Plane: {plane.upper()})")
+
+        if self.plot_params['show_colorbar'] and hasattr(pcm, 'get_array') and pcm.get_array().size > 0:
+            cbar = fig.colorbar(pcm, ax=ax)
+            cbar.set_label(current_colorbar_label)
+        
+        # Explicitly control grid based on plot_params, defaulting to False for heatmaps
+        if self.plot_params.get('grid', False): # Default to False for heatmaps
+            ax.grid(True, alpha=0.3, linestyle=':')
+
+        ax.set_aspect('equal', adjustable='box') # Make kx and ky scales equal if appropriate
+
+        return fig, ax 

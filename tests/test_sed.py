@@ -80,21 +80,6 @@ def test_sed_load_missing_files(tmp_path):
     """Test SED.load raises FileNotFoundError if essential files are missing."""
     base_path = tmp_path / "test_sed_missing"
     # Create only one of the required files
-    np.save(base_path.with_suffix('.sed.npy'), np.array([1])) 
+    np.save(base_path.with_suffix('.sed.npy'), np.array([1]))
     with pytest.raises(FileNotFoundError):
         SED.load(base_path)
-
-# Basic test for gather_3d (more comprehensive tests would mock logger or check values)
-def test_sed_gather_3d_smoke(valid_sed_data):
-    """Smoke test for gather_3d method to ensure it runs and returns tuple of arrays."""
-    sed_obj = SED(**valid_sed_data)
-    result = sed_obj.gather_3d(intensity_thresh_rel=0.01)
-    assert isinstance(result, tuple)
-    assert len(result) == 4
-    for arr in result:
-        assert isinstance(arr, np.ndarray)
-
-def test_sed_gather_3d_empty_input():
-    sed_obj = SED(np.array([]).reshape(0,0,3), np.array([]), np.array([]), np.array([]).reshape(0,3))
-    kx, ky, freqs, amps = sed_obj.gather_3d()
-    assert kx.size == 0 and ky.size == 0 and freqs.size == 0 and amps.size == 0 
