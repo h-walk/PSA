@@ -131,7 +131,7 @@ def main():
         log_intensity=False # Example with linear intensity
     )
     plotter_freq_slice_2.generate_plot()
-
+    
     print(f"Plots have been saved to {output_dir}")
 
 if __name__ == "__main__":

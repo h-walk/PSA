@@ -257,7 +257,8 @@ class SEDCalculator:
              basis_atom_types_ised: Optional[List[int]] = None,
              rescale_factor: Union[str, float] = 1.0, n_recon_frames: int = 100,
              dump_filepath: str = "iSED_reconstruction.dump",
-             plot_dir_ised: Optional[Path] = None, plot_max_freq: Optional[float] = None
+             plot_dir_ised: Optional[Path] = None, plot_max_freq: Optional[float] = None,
+             plot_theme: str = 'light'
              ) -> None:
         logger.info("Starting iSED reconstruction.")
         avg_pos = np.mean(self.traj.positions, axis=0, dtype=np.float32)
@@ -402,11 +403,10 @@ class SEDCalculator:
             logger.warning("iSED: No atoms reconstructed, skipping rescaling.")
 
         final_pos_dump = avg_pos[None,:,:] + wiggles[:,:,:3]
-        atom_types_dump = wiggles[0,:,3].astype(int)
+        atom_types_dump = wiggles[0,:,3].astype(int) # Ensure types are integer for dump
         
-        sx, sy, sz = self.traj.box_lengths[0], self.traj.box_lengths[1], self.traj.box_lengths[2]
-        logger.debug(f"iSED dump box: sx={sx:.3f}, sy={sy:.3f}, sz={sz:.3f}")
-        out_to_qdump(dump_filepath, final_pos_dump, atom_types_dump, sx, sy, sz)
+        # Pass the full box_matrix for correct triclinic box representation
+        out_to_qdump(dump_filepath, final_pos_dump, atom_types_dump, self.traj.box_matrix)
         logger.info(f"iSED reconstruction saved: {dump_filepath}")
 
         if plot_dir_ised and ised_input_intensity_plot is not None and ised_input_freqs_plot is not None:
@@ -451,7 +451,8 @@ class SEDCalculator:
                 'direction_label': k_dir_str, # Use the formatted k_dir_str for label consistency
                 'highlight_region': hl_info,
                 'max_freq': max_freq_ised_plot,
-                'log_intensity': True  # Enable log scaling for intensity
+                'log_intensity': True,  # Enable log scaling for intensity
+                'theme': plot_theme  # Pass theme to SEDPlotter
             }
             SEDPlotter(ised_plot_obj, '2d_intensity', str(ised_plot_fname), **plot_args_ised).generate_plot()
             logger.info(f"iSED input spectrum plot saved: {ised_plot_fname.name}")

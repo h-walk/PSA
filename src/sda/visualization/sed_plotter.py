@@ -47,47 +47,66 @@ class SEDPlotter:
             'tight_layout': True,
             'log_intensity': False,
             'vmin_percentile': 0.0,
-            'vmax_percentile': 100.0
+            'vmax_percentile': 100.0,
+            'theme': 'light'  # Added theme parameter, default to light
         }
         
         # Update with user parameters
         self.plot_params = {**self.default_params, **kwargs}
         
     def generate_plot(self) -> None:
-        """Generate and save the plot based on plot_type."""
-        fig, ax = None, None # Initialize fig and ax
+        fig, ax = None, None
         
-        if self.plot_type == '2d_intensity':
-            fig, ax = self._plot_2d_intensity()
-        elif self.plot_type == '1d_slice':
-            fig, ax = self._plot_1d_slice()
-        elif self.plot_type == 'frequency_slice':
-            fig, ax = self._plot_frequency_slice()
+        # Apply theme settings to matplotlib's rcParams
+        theme = self.plot_params.get('theme', 'light')
+        if theme == 'dark':
+            plt.style.use('dark_background')
+            plt.rcParams['axes.facecolor'] = 'black'
+            plt.rcParams['xtick.color'] = 'white'
+            plt.rcParams['ytick.color'] = 'white'
+            plt.rcParams['text.color'] = 'white'
+            plt.rcParams['axes.labelcolor'] = 'white'
         else:
-            # Attempt to delegate to other plot types if they exist (e.g. _plot_2d_phase)
-            plot_method_name = f"_plot_{self.plot_type}"
-            if hasattr(self, plot_method_name) and callable(getattr(self, plot_method_name)):
-                plot_method = getattr(self, plot_method_name)
-                if self.plot_type.startswith("2d_"): # Assuming 2D plots take no extra args for now
-                    fig, ax = plot_method()
-                elif self.plot_type.startswith("3d_"): # Placeholder for 3D if it also returns fig, ax
-                     # For 3D plots, we might need to pass sed_list_items and data_mode
-                     # This part needs careful consideration of how _plot_3d is structured
-                     # For now, let's assume it works similarly or needs specific handling.
-                     # fig, ax = plot_method(...) # Needs proper arguments
-                     logger.warning(f"Plot type {self.plot_type} might require specific argument handling in generate_plot.")
-                     # Fallback or raise error if not handled
-                     raise ValueError(f"Plot type {self.plot_type} not fully supported in generate_plot yet.")
+            plt.style.use('default')
+            plt.rcParams['axes.facecolor'] = 'white'
+            plt.rcParams['xtick.color'] = 'black'
+            plt.rcParams['ytick.color'] = 'black'
+            plt.rcParams['text.color'] = 'black'
+            plt.rcParams['axes.labelcolor'] = 'black'
 
+        plot_method_name = f"_plot_{self.plot_type}"
+
+        if hasattr(self, plot_method_name) and callable(getattr(self, plot_method_name)):
+            plot_method = getattr(self, plot_method_name)
+            if self.plot_type.startswith("2d_"):
+                # Assuming 2D plots take no extra args for now
+                fig, ax = plot_method()
+            elif self.plot_type.startswith("3d_"):
+                # Placeholder for 3D if it also returns fig, ax
+                logger.warning(f"Plot type {self.plot_type} might require specific argument handling in generate_plot.")
+                # Fallback or raise error if not handled
+                raise ValueError(f"Plot type {self.plot_type} not fully supported in generate_plot yet.")
             else:
-                raise ValueError(f"Unknown plot type: {self.plot_type}")
-        
+                # If a plot_method exists but isn't explicitly handled (e.g. not "2d_" or "3d_")
+                # fig and ax will remain None, which is handled by the 'if fig:' check later.
+                # Or, we could attempt to call it if it has a standard signature:
+                # try:
+                #     fig, ax = plot_method()
+                # except Exception as e:
+                #     logger.error(f"Error calling unhandled plot method {plot_method_name}: {e}")
+                # For now, let fig, ax remain None if not 2d/3d
+                pass
+        else:
+            # This is where the original SyntaxError was reported.
+            # This 'else' corresponds to 'if hasattr...'
+            raise ValueError(f"Unknown or non-callable plot type / method: {self.plot_type} (method: {plot_method_name})")
+            
         if fig: # Proceed only if a figure was generated
             if self.plot_params.get('tight_layout', True): # Use get for safety
                 fig.tight_layout()
             
             self.output_path.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(self.output_path, dpi=self.plot_params.get('dpi', 300))
+            fig.savefig(self.output_path, dpi=self.plot_params.get('dpi', 300), bbox_inches='tight')
             plt.close(fig) # Close the figure to free memory
             logger.info(f"Plot saved to: {self.output_path}")
         else:
@@ -176,7 +195,7 @@ class SEDPlotter:
         
         # --- Plotting ---
         pcm = ax.pcolormesh(K, F, intensity_to_plot, 
-                           cmap=self.plot_params['cmap'],
+                      cmap=self.plot_params['cmap'],
                            shading='gouraud', # Changed from 'auto'
                            vmin=vmin, vmax=vmax)
         
@@ -211,7 +230,7 @@ class SEDPlotter:
             else: # Fallback if max_y_limit is 0 or negative
                  ax.set_ylim(0,1)
 
-
+        
         # Add highlight region if specified
         if self.plot_params['highlight_region']:
             hl = self.plot_params['highlight_region']
@@ -220,7 +239,7 @@ class SEDPlotter:
                         'g+', markersize=10, label='Target point') # Changed from 'r+' to 'g+'
                 if self.plot_params.get('highlight_label', False): # OriginalSDA has show_target_label
                      ax.legend()
-                
+        
         # Add colorbar
         if self.plot_params['show_colorbar'] and hasattr(pcm, 'get_array') and pcm.get_array().size > 0:
             cbar = fig.colorbar(pcm, ax=ax)
@@ -432,22 +451,70 @@ class SEDPlotter:
                 raise TypeError("3D plots: sed_data list must contain SED objects.")
 
     def _setup_ax_style(self, fig, ax, is_3d=False):
-        plt.style.use('dark_background')
-        fig.patch.set_facecolor('black')
-        ax.set_facecolor('black')
-        ax.tick_params(axis='x', colors='white')
-        ax.tick_params(axis='y', colors='white')
+        theme = self.plot_params.get('theme', 'light')
+
+        if theme == 'dark':
+            plt.style.use('dark_background')
+            fig.patch.set_facecolor('black')
+            ax.set_facecolor('black')
+            tick_color = 'white'
+            label_color = 'white'
+            grid_color = 'gray'
+            pane_edge_color = 'dimgray'
+            line_color = 'lightgray'
+            title_color = 'white'
+            cbar_label_color = 'white'
+            cbar_tick_color = 'white'
+        else: # Default to light theme
+            plt.style.use('default') # Or 'seaborn-v0_8-whitegrid'
+            fig.patch.set_facecolor('white')
+            ax.set_facecolor('white')
+            tick_color = 'black'
+            label_color = 'black'
+            grid_color = 'lightgray' # Softer grid for light mode
+            pane_edge_color = 'darkgray'
+            line_color = 'black'
+            title_color = 'black'
+            cbar_label_color = 'black'
+            cbar_tick_color = 'black'
+
+        ax.tick_params(axis='x', colors=tick_color)
+        ax.tick_params(axis='y', colors=tick_color)
         if hasattr(ax, 'xaxis'): 
-            ax.xaxis.label.set_color('white')
+            ax.xaxis.label.set_color(label_color)
         if hasattr(ax, 'yaxis'): 
-            ax.yaxis.label.set_color('white')
+            ax.yaxis.label.set_color(label_color)
+        
+        # Common settings for title, should be applied after specific theme colors
+        # The actual title text is set in individual plot methods
+        if hasattr(ax, 'title'):
+             ax.title.set_color(title_color)
+
+
         if is_3d:
             ax.xaxis.pane.fill = ax.yaxis.pane.fill = ax.zaxis.pane.fill = False
-            ax.xaxis.pane.set_edgecolor('dimgray'); ax.yaxis.pane.set_edgecolor('dimgray'); ax.zaxis.pane.set_edgecolor('dimgray')
-            ax.grid(True, color='gray', linestyle=':', linewidth=0.5, alpha=0.5)
-            ax.xaxis.line.set_color('lightgray'); ax.yaxis.line.set_color('lightgray'); ax.zaxis.line.set_color('lightgray')
-            if hasattr(ax, 'zaxis'): ax.tick_params(axis='z', colors='white'); ax.zaxis.label.set_color('white')
-        else: ax.grid(True, alpha=0.3, linestyle=':', color='gray')
+            ax.xaxis.pane.set_edgecolor(pane_edge_color)
+            ax.yaxis.pane.set_edgecolor(pane_edge_color)
+            ax.zaxis.pane.set_edgecolor(pane_edge_color)
+            ax.grid(True, color=grid_color, linestyle=':', linewidth=0.5, alpha=0.7 if theme == 'light' else 0.5)
+            ax.xaxis.line.set_color(line_color)
+            ax.yaxis.line.set_color(line_color)
+            ax.zaxis.line.set_color(line_color)
+            if hasattr(ax, 'zaxis'): 
+                ax.tick_params(axis='z', colors=tick_color)
+                ax.zaxis.label.set_color(label_color)
+        else: 
+            ax.grid(True, alpha=0.7 if theme == 'light' else 0.3, linestyle=':', color=grid_color)
+        
+        # Apply title color for all plot types, as title is set within plot methods
+        # This ensures title color is consistent with the theme
+        # Individual plot methods still set the text of the title
+        current_title = ax.get_title()
+        ax.set_title(current_title, color=title_color)
+        
+        # Update colorbar label and tick colors, if colorbar is created elsewhere
+        # For colorbars created in _plot_2d_phase and _plot_3d, this logic needs to be inside those.
+        # For pcolormesh in _plot_2d_intensity, cbar is created after this call.
 
     def _plot_2d_phase(self, sed_item: SED):
         if sed_item.phase is None: 
@@ -474,7 +541,7 @@ class SEDPlotter:
                            vmax=self.plot_params.get('vmax', np.pi/2))
         
         plot_title = self.plot_params['title']
-        ax.set_title(plot_title, color='white')
+        ax.set_title(plot_title, color=self.plot_params.get('title_color', 'white' if self.plot_params.get('theme','light') == 'dark' else 'black'))
         ax.set_xlabel('k (2π/Å)')
         ax.set_ylabel('Frequency (THz)')
 
@@ -496,8 +563,8 @@ class SEDPlotter:
             ax.set_xlim(np.min(sed_item.k_points), np.max(sed_item.k_points))
         
         cbar = fig.colorbar(pcm, ax=ax, label='Phase diff (rad)')
-        cbar.ax.yaxis.label.set_color('white')
-        cbar.ax.tick_params(colors='white')
+        cbar.ax.yaxis.label.set_color(self.plot_params.get('cbar_label_color', 'white' if self.plot_params.get('theme','light') == 'dark' else 'black'))
+        cbar.ax.tick_params(colors=self.plot_params.get('cbar_tick_color', 'white' if self.plot_params.get('theme','light') == 'dark' else 'black'))
         return fig, ax
 
     def _gather_3d_data(self, sed_list_items: List[SED], data_mode: str):
@@ -594,11 +661,11 @@ class SEDPlotter:
         
         if cmap and hasattr(sc,'get_array') and sc.get_array().size > 0 and not isinstance(c_p,str): 
             cbar = plt.colorbar(sc, ax=ax, shrink=0.75, aspect=20, pad=0.1)
-            cbar.set_label(cbar_lbl, color='white', fontsize=10)
-            cbar.ax.tick_params(colors='lightgray', labelsize=9)
+            cbar.set_label(cbar_lbl, color=self.plot_params.get('cbar_label_color', 'white' if self.plot_params.get('theme','light') == 'dark' else 'black'), fontsize=10)
+            cbar.ax.tick_params(colors=self.plot_params.get('cbar_tick_color', 'white' if self.plot_params.get('theme','light') == 'dark' else 'black'), labelsize=9)
 
         plot_title_str = self.plot_params['title']
-        ax.set_title(plot_title_str, color='white', fontsize=14)
+        ax.set_title(plot_title_str, color=self.plot_params.get('title_color', 'white' if self.plot_params.get('theme','light') == 'dark' else 'black'), fontsize=14)
         return fig, ax
 
     def generate_plot(self):
@@ -618,7 +685,7 @@ class SEDPlotter:
         if fig:
             self.output_path.parent.mkdir(parents=True, exist_ok=True)
             fig.tight_layout()
-            fig.savefig(self.output_path, dpi=self.plot_params['dpi'], facecolor='black', bbox_inches='tight')
+            fig.savefig(self.output_path, dpi=self.plot_params.get('dpi', 300), bbox_inches='tight')
             plt.close(fig)
             logger.info(f"Plot saved: {self.output_path.name}")
         else: 

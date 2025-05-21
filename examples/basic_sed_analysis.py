@@ -43,7 +43,7 @@ def main():
     # Get k-path for Gamma-X direction
     print("Generating k-path...")
     k_mags, k_vecs = calculator.get_k_path(
-        direction_spec=[0,1,0], # from hBN_monolayer_config.yaml (sed_calculation.directions)
+        direction_spec=[1,0,0], # from hBN_monolayer_config.yaml (sed_calculation.directions)
         bz_coverage=4.0, # from hBN_monolayer_config.yaml (sed_calculation.bz_coverage)
         n_k=250, # from hBN_monolayer_config.yaml (sed_calculation.n_kpoints)
         lat_param=2.491 # from hBN_monolayer_config.yaml (md_system.lattice_parameter)
@@ -73,13 +73,14 @@ def main():
     plotter = SEDPlotter(
         sed,  # sed_obj
         '2d_intensity',  # plot_type
-        str(output_dir / 'sed_intensity_2D_010.png'),  # output_path
-        title='SED Intensity [010]',
-        direction_label='[010]',
+        str(output_dir / 'sed_intensity_2D_100.png'),  # output_path
+        title='SED Intensity [100]',
+        direction_label='[100]',
         max_freq=50.0,
         log_intensity=True, # Or True, depending on preference
         vmin_percentile=0.0,  # Use actual min for vmin
-        vmax_percentile=100.0 # Use actual max for vmax
+        vmax_percentile=100.0, # Use actual max for vmax
+        theme='light' # Specify light theme (default), or use 'dark' for dark mode
     )
     plotter.generate_plot()
 
