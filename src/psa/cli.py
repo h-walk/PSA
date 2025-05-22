@@ -36,7 +36,7 @@ def main():
     out_dir = Path(args.output_dir); out_dir.mkdir(parents=True, exist_ok=True)
 
     default_config = {
-        'general': {'trajectory_file_format':'auto', 'use_velocities':False, 'save_npy_trajectory':True, 'save_npy_sed_data':True, 'chiral_mode_enabled':False},
+        'general': {'trajectory_file_format':'auto', 'use_displacements':False, 'save_npy_trajectory':True, 'save_npy_sed_data':True, 'chiral_mode_enabled':False},
         'md_system': {'dt':0.001, 'nx':1, 'ny':1, 'nz':1, 'lattice_parameter':None},
         'sed_calculation': {'directions':[[1,0,0]], 'n_kpoints':100, 'bz_coverage':1.0, 'polarization_indices_chiral':[0,1], 'basis':{'atom_indices':None, 'atom_types':None}},
         'plotting': {'max_freq_2d':None, 'highlight_2d_intensity':{'k_min':None,'k_max':None,'w_min':None,'w_max':None}, 'enable_3d_dispersion_plot':True, '3d_plot_settings':{'intensity_log_scale':True, 'intensity_thresh_rel':0.05}},
@@ -67,7 +67,7 @@ def main():
         if gen_cfg['save_npy_trajectory']: traj_load.save_trajectory_npy(traj_data)
 
         sed_calc = SEDCalculator(traj=traj_data, nx=md_cfg['nx'], ny=md_cfg['ny'], nz=md_cfg['nz'],
-                                 dt_ps=md_cfg['dt'], use_velocities=gen_cfg['use_velocities'])
+                                 dt_ps=md_cfg['dt'], use_displacements=gen_cfg['use_displacements'])
         
         eff_lat_param = md_cfg.get('lattice_parameter')
         if eff_lat_param is None or eff_lat_param <= 1e-6:
@@ -93,7 +93,11 @@ def main():
             max_i_vals = []
             for dir_s in dirs_list:
                 k_mags_norm, k_vecs_norm = sed_calc.get_k_path(dir_s, sed_cfg['bz_coverage'], sed_cfg['n_kpoints'], eff_lat_param)
-                sed_complex_norm, _ = sed_calc.calculate(k_mags_norm, k_vecs_norm, basis_atom_indices=main_sed_basis_idx)
+                sed_obj_norm = sed_calc.calculate(k_points_mags=k_mags_norm, 
+                                                  k_vectors_3d=k_vecs_norm, 
+                                                  basis_atom_indices=main_sed_basis_idx,
+                                                  k_grid_shape=None)
+                sed_complex_norm = sed_obj_norm.sed
                 curr_i = np.sum(np.abs(sed_complex_norm)**2, axis=-1)
                 if curr_i.size > 0: max_i_vals.append(np.max(curr_i))
             if max_i_vals: global_max_i = np.max(max_i_vals)
@@ -123,14 +127,28 @@ def main():
             if sed_res is None or needs_recalc_for_phase:
                 if needs_recalc_for_phase and sed_res: logger.info(f"Recalculating SED for {d_lbl} (phase data needed).")
                 k_m, k_v = sed_calc.get_k_path(dir_val_spec, sed_cfg['bz_coverage'], sed_cfg['n_kpoints'], eff_lat_param)
-                sed_complex, freqs_arr = sed_calc.calculate(k_m, k_v, basis_atom_indices=main_sed_basis_idx)
+                sed_obj_calc = sed_calc.calculate(k_points_mags=k_m, 
+                                                  k_vectors_3d=k_v, 
+                                                  basis_atom_indices=main_sed_basis_idx,
+                                                  k_grid_shape=None)
+                sed_complex = sed_obj_calc.sed
+                freqs_arr = sed_obj_calc.freqs
+
                 phase_arr = None
                 if gen_cfg['chiral_mode_enabled']:
                     pol_idx_chiral = sed_cfg['polarization_indices_chiral']
                     if len(pol_idx_chiral) >= 2 and sed_complex.shape[-1] > max(pol_idx_chiral):
                         phase_arr = sed_calc.calculate_chiral_phase(sed_complex[:,:,pol_idx_chiral[0]], sed_complex[:,:,pol_idx_chiral[1]])
                     else: logger.error(f"Chiral mode error for {d_lbl}: Insufficient polarizations or invalid indices {pol_idx_chiral}.")
-                sed_res = SED(sed_complex, freqs_arr, k_m, k_v, phase_arr)
+                sed_res = SED(sed=sed_obj_calc.sed,
+                              freqs=sed_obj_calc.freqs,
+                              k_points=sed_obj_calc.k_points,
+                              k_vectors=sed_obj_calc.k_vectors,
+                              phase=phase_arr,
+                              is_complex=sed_obj_calc.is_complex,
+                              k_grid_shape=sed_obj_calc.k_grid_shape,
+                              dt_ps=sed_obj_calc.dt_ps,
+                              trajectory_metadata=sed_obj_calc.trajectory_metadata)
                 if gen_cfg['save_npy_sed_data']: sed_res.save(sed_savefile_base)
             
             all_sed_results.append(sed_res)

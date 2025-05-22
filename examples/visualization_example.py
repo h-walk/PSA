@@ -74,7 +74,7 @@ def main():
             'k_point_target': np.pi,
             'freq_point_target': 15.0
         },
-        log_intensity=False # Explicitly set, can be True
+        intensity_scale='sqrt'
     )
     plotter_2d.generate_plot()
     
@@ -87,7 +87,8 @@ def main():
         '1d_slice', # plot_type (positional)
         str(output_dir / "sed_slice_k_pi.png"), # output_path (positional)
         title=f"SED Intensity at k ≈ {sed_data.k_points[k_index_for_slice]:.2f} (index {k_index_for_slice})",
-        k_index=k_index_for_slice # Note: SEDPlotter expects k_index or freq_index
+        k_index=k_index_for_slice, # Note: SEDPlotter expects k_index or freq_index
+        intensity_scale='sqrt'
     )
     plotter_1d_k.generate_plot()
 
@@ -100,7 +101,8 @@ def main():
         '1d_slice', # plot_type (positional)
         str(output_dir / "sed_slice_freq_20THz.png"), # output_path (positional)
         title=f"SED Intensity at freq ≈ {sed_data.freqs[freq_index_for_slice]:.2f} THz (index {freq_index_for_slice})",
-        freq_index=freq_index_for_slice # Note: SEDPlotter expects k_index or freq_index
+        freq_index=freq_index_for_slice, # Note: SEDPlotter expects k_index or freq_index
+        intensity_scale='sqrt'
     )
     plotter_1d_f.generate_plot()
     
@@ -114,7 +116,7 @@ def main():
         title=f"SED Intensity vs k-points at target ω ≈ {target_freq_for_slice:.1f} THz",
         target_frequency=target_freq_for_slice,
         direction_label="[100] direction",
-        log_intensity=True # Example with log intensity
+        intensity_scale='sqrt'
     )
     plotter_freq_slice.generate_plot()
 
@@ -128,7 +130,7 @@ def main():
         title=f"SED Intensity vs k-points at target ω ≈ {target_freq_for_slice_2:.1f} THz (Linear)",
         target_frequency=target_freq_for_slice_2,
         direction_label="[100] direction",
-        log_intensity=False # Example with linear intensity
+        intensity_scale='sqrt'
     )
     plotter_freq_slice_2.generate_plot()
     

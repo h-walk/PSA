@@ -36,8 +36,7 @@ def main():
         traj=trajectory,
         nx=60,  # from hBN_monolayer_config.yaml
         ny=60,  # from hBN_monolayer_config.yaml
-        nz=1,   # from hBN_monolayer_config.yaml
-        use_velocities=True # from hBN_monolayer_config.yaml (general.use_velocities)
+        nz=1   # from hBN_monolayer_config.yaml
     )
 
     # Perform iSED reconstruction

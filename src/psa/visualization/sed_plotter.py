@@ -48,6 +48,7 @@ class SEDPlotter:
             'grid': True,
             'tight_layout': True,
             'log_intensity': False,
+            'intensity_scale': 'linear', # New parameter: 'linear', 'log', 'sqrt'
             'vmin_percentile': 0.0,
             'vmax_percentile': 100.0,
             'theme': 'light'  # Added theme parameter, default to light
@@ -152,12 +153,31 @@ class SEDPlotter:
         intensity_to_plot = intensity_at_pos_freqs
         current_colorbar_label = self.plot_params['colorbar_label']
 
-        if self.plot_params['log_intensity']:
+        intensity_scale_type = self.plot_params.get('intensity_scale', 'linear').lower()
+        # Backward compatibility: if log_intensity is True and intensity_scale is default linear, use log
+        if self.plot_params.get('log_intensity') and intensity_scale_type == 'linear':
+            intensity_scale_type = 'log'
+
+        if intensity_scale_type == 'log':
             if np.any(intensity_to_plot > 1e-12): # Check if there's anything to log scale
                 intensity_to_plot = np.log10(np.maximum(intensity_to_plot, 1e-12)) # Avoid log(0) or log(negative)
                 current_colorbar_label = 'Log10(Intensity)'
             else:
                 logger.warning("Log scaling requested for intensity, but all values are too small or zero. Using linear scale.")
+        elif intensity_scale_type == 'sqrt':
+            if np.any(intensity_to_plot >= 0): # Check if there's anything to sqrt scale
+                intensity_to_plot = np.sqrt(np.maximum(intensity_to_plot, 0)) # Avoid sqrt(negative)
+                current_colorbar_label = 'Sqrt(Intensity)'
+            else:
+                logger.warning("Sqrt scaling requested for intensity, but all values are negative. Using linear scale.")
+        elif intensity_scale_type == 'dsqrt':
+            if np.any(intensity_to_plot >= 0):
+                intensity_to_plot = np.sqrt(np.sqrt(np.maximum(intensity_to_plot, 0))) # Avoid sqrt(negative)
+                current_colorbar_label = 'DSqrt(Intensity)'
+            else:
+                logger.warning("DSqrt scaling requested for intensity, but all values are negative. Using linear scale.")
+        elif intensity_scale_type != 'linear':
+            logger.warning(f"Unknown intensity_scale_type '{intensity_scale_type}'. Using linear scale.")
 
         # Ensure intensity_to_plot has correct dimensions for meshgrid if it became 1D due to single k-point/freq
         if intensity_to_plot.ndim == 1 and k_points_plot.size > 1 and plot_freqs.size == 1: # Single freq, multiple k
@@ -282,12 +302,31 @@ class SEDPlotter:
         xlabel = ""
         ylabel = 'Intensity (arb. units)'
         
-        if self.plot_params.get('log_intensity'):
+        intensity_scale_type = self.plot_params.get('intensity_scale', 'linear').lower()
+        # Backward compatibility
+        if self.plot_params.get('log_intensity') and intensity_scale_type == 'linear':
+            intensity_scale_type = 'log'
+
+        if intensity_scale_type == 'log':
             if np.any(intensity_data > 1e-12):
                 intensity_data = np.log10(np.maximum(intensity_data, 1e-12))
                 ylabel = 'Log10(Intensity)'
             else:
                 logger.warning("Log scaling requested for intensity, but all values are too small or zero. Using linear scale.")
+        elif intensity_scale_type == 'sqrt':
+            if np.any(intensity_data >= 0):
+                intensity_data = np.sqrt(np.maximum(intensity_data, 0))
+                ylabel = 'Sqrt(Intensity)'
+            else:
+                logger.warning("Sqrt scaling requested for intensity, but all values are negative. Using linear scale.")
+        elif intensity_scale_type == 'dsqrt':
+            if np.any(intensity_data >= 0):
+                intensity_data = np.sqrt(np.sqrt(np.maximum(intensity_data, 0)))
+                ylabel = 'DSqrt(Intensity)'
+            else:
+                logger.warning("DSqrt scaling requested for intensity, but all values are negative. Using linear scale.")
+        elif intensity_scale_type != 'linear':
+            logger.warning(f"Unknown intensity_scale_type '{intensity_scale_type}'. Using linear scale.")
 
         if k_index is not None:
             if not (0 <= k_index < self.sed.k_points.shape[0]):
@@ -402,13 +441,32 @@ class SEDPlotter:
         # Log scaling for y-axis (intensity)
         current_ylabel = 'Intensity (arb. units)'
         plot_data = intensity_slice
-        if self.plot_params.get('log_intensity'):
+        intensity_scale_type = self.plot_params.get('intensity_scale', 'linear').lower()
+        # Backward compatibility
+        if self.plot_params.get('log_intensity') and intensity_scale_type == 'linear':
+            intensity_scale_type = 'log'
+        
+        if intensity_scale_type == 'log':
             if np.any(plot_data > 1e-12):
                 plot_data = np.log10(np.maximum(plot_data, 1e-12))
                 current_ylabel = 'Log10(Intensity)'
             else:
                 logger.warning("Log scaling requested for intensity, but all values are too small or zero. Using linear scale.")
-        
+        elif intensity_scale_type == 'sqrt':
+            if np.any(plot_data >= 0):
+                plot_data = np.sqrt(np.maximum(plot_data, 0))
+                current_ylabel = 'Sqrt(Intensity)'
+            else:
+                logger.warning("Sqrt scaling requested for intensity, but all values are negative. Using linear scale.")
+        elif intensity_scale_type == 'dsqrt':
+            if np.any(plot_data >= 0):
+                plot_data = np.sqrt(np.sqrt(np.maximum(plot_data, 0)))
+                current_ylabel = 'DSqrt(Intensity)'
+            else:
+                logger.warning("DSqrt scaling requested for intensity, but all values are negative. Using linear scale.")
+        elif intensity_scale_type != 'linear':
+            logger.warning(f"Unknown intensity_scale_type '{intensity_scale_type}'. Using linear scale.")
+
         ax.plot(k_points_plot, plot_data)
         
         # Labels and Title
@@ -694,12 +752,31 @@ class SEDPlotter:
         plot_intensity_data = intensity_grid.T # Transpose to match meshgrid (n_ky, n_kx)
 
         current_colorbar_label = self.plot_params['colorbar_label']
-        if self.plot_params['log_intensity']:
+        intensity_scale_type = self.plot_params.get('intensity_scale', 'linear').lower()
+        # Backward compatibility
+        if self.plot_params.get('log_intensity') and intensity_scale_type == 'linear':
+            intensity_scale_type = 'log'
+
+        if intensity_scale_type == 'log':
             if np.any(plot_intensity_data > 1e-12):
                 plot_intensity_data = np.log10(np.maximum(plot_intensity_data, 1e-12))
                 current_colorbar_label = 'Log10(Intensity)'
             else:
                 logger.warning("Log scaling requested, but all values too small. Using linear scale.")
+        elif intensity_scale_type == 'sqrt':
+            if np.any(plot_intensity_data >= 0): # Check if there's anything to sqrt scale
+                plot_intensity_data = np.sqrt(np.maximum(plot_intensity_data, 0)) # Avoid sqrt(negative)
+                current_colorbar_label = 'Sqrt(Intensity)'
+            else:
+                logger.warning("Sqrt scaling requested for intensity, but all values are negative. Using linear scale.")
+        elif intensity_scale_type == 'dsqrt':
+            if np.any(plot_intensity_data >= 0):
+                plot_intensity_data = np.sqrt(np.sqrt(np.maximum(plot_intensity_data, 0)))
+                current_colorbar_label = 'DSqrt(Intensity)'
+            else:
+                logger.warning("DSqrt scaling requested for intensity, but all values are negative. Using linear scale.")
+        elif intensity_scale_type != 'linear':
+            logger.warning(f"Unknown intensity_scale_type '{intensity_scale_type}'. Using linear scale.")
 
         # Determine vmin and vmax for the color scale
         # Prioritize vmin/vmax if directly provided in plot_params

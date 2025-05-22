@@ -36,8 +36,7 @@ def main():
         traj=trajectory,
         nx=60,  # from hBN_monolayer_config.yaml
         ny=60,  # from hBN_monolayer_config.yaml
-        nz=1,   # from hBN_monolayer_config.yaml
-        use_velocities=True  # from hBN_monolayer_config.yaml (general.use_velocities)
+        nz=1   # from hBN_monolayer_config.yaml
     )
 
     # Get k-path for Gamma-X direction
@@ -53,12 +52,18 @@ def main():
     print("Calculating SED...")
     # For chiral phase calculation, we need the complex SED components directly.
     # So, coherent summation is implied for the components used in chiral phase.
-    sed_complex_data, freqs, _ = calculator.calculate(
-        k_mags, 
-        k_vecs,
+    # Updated to directly use the SED object returned by calculate
+    sed_object = calculator.calculate(
+        k_points_mags=k_mags, 
+        k_vectors_3d=k_vecs,
         basis_atom_types=[1,2], # This will be a coherent sum over types 1 and 2
-        summation_mode='coherent' # Must be coherent for subsequent chiral phase calculation
-        )
+        summation_mode='coherent', # Must be coherent for subsequent chiral phase calculation
+        k_grid_shape=None # This is a k-path
+    )
+    
+    sed_complex_data = sed_object.sed
+    # freqs = sed_object.freqs # Available from sed_object for SED constructor
+    # is_complex = sed_object.is_complex # Available from sed_object for SED constructor
 
     # Calculate phase angle
     print("Calculating phase angle...")
@@ -68,29 +73,29 @@ def main():
         angle_range_opt="C"
     )
 
-    # Create SED object with phase
-    # The sed_complex_data is stored for potential use, but phase plot uses sed.phase
-    # Intensity plot will be based on this sed_complex_data.
-    print("Creating SED object with phase data...")
-    sed = SED(
-        sed=sed_complex_data,
-        freqs=freqs,
-        k_points=k_mags,
-        k_vectors=k_vecs,
+    # Create a new SED object that includes the phase information for plotting
+    # The sed_complex_data can be passed directly as the 'sed' field.
+    # We need to ensure all other required fields of SED are populated from sed_object
+    sed_for_plotting = SED(
+        sed=sed_complex_data, 
+        freqs=sed_object.freqs,
+        k_points=sed_object.k_points,
+        k_vectors=sed_object.k_vectors,
+        k_grid_shape=sed_object.k_grid_shape, # Pass k_grid_shape
         phase=phase,
-        is_complex=True # Data fed to chiral phase and stored is complex
+        is_complex=sed_object.is_complex # Ensure is_complex is also passed
     )
 
     # Generate intensity plot
     print("Generating intensity plot...")
     intensity_plotter = SEDPlotter(
-        sed, # sed_obj (positional)
+        sed_for_plotting, # sed_obj (positional)
         '2d_intensity', # plot_type (positional)
         str(output_dir / 'chiral_sed_intensity_2D.png'), # output_path (positional)
         title='SED Intensity [100] (Chiral Example)',
         direction_label='[100]',
         max_freq=50.0,
-        log_intensity=False, # Explicitly set, can be True for log scale
+        intensity_scale='sqrt',
         vmin_percentile=1.0,
         vmax_percentile=99.0
     )
@@ -102,7 +107,7 @@ def main():
     # Default cmap 'inferno' might not be ideal for phase, 'coolwarm' or 'hsv' often used.
     print("Generating phase plot...")
     phase_plotter = SEDPlotter(
-        sed, # sed_obj (positional)
+        sed_for_plotting, # sed_obj (positional)
         '2d_phase', # plot_type (positional)
         str(output_dir / 'chiral_sed_phase_2D.png'), # output_path (positional)
         title='Chiral Phase [100]',

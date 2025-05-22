@@ -17,11 +17,11 @@ logger = logging.getLogger(__name__)
 
 class SEDCalculator:
     def __init__(self, traj: Trajectory, nx: int, ny: int, nz: int, 
-                 use_velocities: bool = False, dt_ps: Optional[float] = None):
+                 use_displacements: bool = False, dt_ps: Optional[float] = None):
         if not (nx > 0 and ny > 0 and nz > 0):
             raise ValueError("System dimensions (nx, ny, nz) must be positive.")
         self.traj = traj
-        self.use_velocities = use_velocities
+        self.use_displacements = use_displacements
         
         if dt_ps is not None:
             logger.warning("Explicitly providing dt_ps to SEDCalculator is deprecated. "
@@ -66,10 +66,10 @@ class SEDCalculator:
 
         mean_pos_group = mean_pos_all[group_atom_indices]
         
-        if self.use_velocities:
-            data_ft_group = self.traj.velocities[:, group_atom_indices, :]
-        else:
+        if self.use_displacements:
             data_ft_group = (self.traj.positions[:, group_atom_indices, :] - mean_pos_group[None, :, :])
+        else:
+            data_ft_group = self.traj.velocities[:, group_atom_indices, :]
 
         n_k_vecs = len(k_vectors_3d)
         sed_tk_pol_group = np.zeros((n_t, n_k_vecs, 3), dtype=np.complex64)
@@ -161,8 +161,10 @@ class SEDCalculator:
     def calculate(self, k_points_mags: np.ndarray, k_vectors_3d: np.ndarray,
                   basis_atom_indices: Optional[Union[List[int], List[List[int]], np.ndarray]] = None,
                   basis_atom_types: Optional[Union[List[int], List[List[int]]]] = None,
-                  summation_mode: str = 'coherent'
-                  ) -> Tuple[np.ndarray, np.ndarray, bool]: # Returns (sed_data, freqs_thz, is_complex)
+                  summation_mode: str = 'coherent',
+                  k_grid_shape: Optional[Tuple[int, int]] = None,
+                  k_chunk_size: int = 500
+                  ) -> SED:
         
         if summation_mode not in ['coherent', 'incoherent']:
             raise ValueError(f"summation_mode must be 'coherent' or 'incoherent', got {summation_mode}")
@@ -170,7 +172,14 @@ class SEDCalculator:
         n_t, n_atoms_tot = self.traj.n_frames, self.traj.n_atoms
         if n_t == 0 or n_atoms_tot == 0:
             logger.warning("Cannot calculate SED: 0 frames or 0 atoms.")
-            return np.array([],dtype=np.complex64).reshape(0,0,3), np.array([],dtype=np.float32), True
+            # Return an empty SED object
+            return SED(np.array([],dtype=np.complex64).reshape(0,0,3), 
+                       np.array([],dtype=np.float32), 
+                       k_points_mags, 
+                       k_vectors_3d,
+                       k_grid_shape=k_grid_shape,
+                       is_complex=True, 
+                       phase=None)
 
         mean_pos_all = np.mean(self.traj.positions, axis=0, dtype=np.float32)
         freqs = np.fft.fftfreq(n_t, d=self.dt_ps) if n_t > 0 else np.array([],dtype=np.float32)
@@ -182,19 +191,18 @@ class SEDCalculator:
             if basis_atom_indices is not None:
                 logger.warning("Both basis_atom_types and basis_atom_indices provided. Using basis_atom_types.")
             
-            # Ensure basis_atom_types is a list of lists for consistent group processing
             processed_basis_atom_types: List[List[int]] = []
             if isinstance(basis_atom_types, list) and len(basis_atom_types) > 0:
                 if all(isinstance(item, list) for item in basis_atom_types):
-                    processed_basis_atom_types = basis_atom_types # Already list of lists
+                    processed_basis_atom_types = basis_atom_types
                 elif all(isinstance(item, int) for item in basis_atom_types):
-                    if summation_mode == 'incoherent': # Each type is a group
+                    if summation_mode == 'incoherent': 
                         processed_basis_atom_types = [[t] for t in basis_atom_types]
-                    else: # All types form a single group for coherent sum
+                    else: 
                         processed_basis_atom_types = [list(basis_atom_types)]
                 else:
                     raise ValueError("basis_atom_types must be a list of ints or a list of lists of ints.")
-            elif isinstance(basis_atom_types, int): # Single type treated as a single group
+            elif isinstance(basis_atom_types, int):
                  processed_basis_atom_types = [[basis_atom_types]]
 
             for type_group in processed_basis_atom_types:
@@ -208,20 +216,19 @@ class SEDCalculator:
             processed_basis_atom_indices: List[np.ndarray] = []
             if isinstance(basis_atom_indices, list):
                 if len(basis_atom_indices) == 0:
-                    pass # No specific indices, will use all atoms later if no groups formed
-                elif all(isinstance(item, list) for item in basis_atom_indices): # List of lists of indices
+                    pass 
+                elif all(isinstance(item, list) for item in basis_atom_indices): 
                     for sublist in basis_atom_indices:
                         arr = np.asarray(sublist, dtype=int)
                         if arr.size > 0 : processed_basis_atom_indices.append(arr)
-                elif all(isinstance(item, int) for item in basis_atom_indices): # Flat list of indices
+                elif all(isinstance(item, int) for item in basis_atom_indices): 
                     arr = np.asarray(basis_atom_indices, dtype=int)
-                    if arr.size > 0: processed_basis_atom_indices.append(arr) # Treated as a single group
+                    if arr.size > 0: processed_basis_atom_indices.append(arr)
                 else:
                     raise ValueError("basis_atom_indices must be a list of ints or a list of lists of ints.")
             elif isinstance(basis_atom_indices, np.ndarray):
                 if basis_atom_indices.ndim == 1 and basis_atom_indices.size > 0:
                      processed_basis_atom_indices.append(basis_atom_indices.astype(int))
-                # Add handling for 2D ndarray if needed, treating rows as groups
                 else:
                     logger.warning("Unsupported np.ndarray format for basis_atom_indices. Using all atoms if no other basis defined.")
             
@@ -231,44 +238,81 @@ class SEDCalculator:
                 if grp_idx.size > 0:
                     atom_groups.append(grp_idx)
 
-        # If no groups defined by basis_atom_types or basis_atom_indices, use all atoms as a single group
         if not atom_groups:
             logger.debug(f"No specific basis provided or basis resulted in empty groups. Using all {n_atoms_tot} atoms as a single group.")
             atom_groups.append(np.arange(n_atoms_tot))
             if summation_mode == 'incoherent' and n_atoms_tot > 0:
-                # If incoherent mode is on and we fell back to all atoms, warn it will be coherent sum of all atoms.
                 logger.info("Using all atoms. Incoherent sum will effectively be a coherent sum of all atoms.")
         
-        # Logic for coherent vs incoherent sum based on atom_groups
+        # --- K-vector chunking logic ---
+        num_k_vectors = len(k_vectors_3d)
+        # Ensure k_chunk_size is at least 1 and not larger than total k-vectors
+        actual_k_chunk_size = min(max(1, k_chunk_size), num_k_vectors) if num_k_vectors > 0 else 1
+        num_chunks = (num_k_vectors + actual_k_chunk_size - 1) // actual_k_chunk_size if num_k_vectors > 0 else 0
+
+        # Initialize the full sed_data array based on summation_mode
+        is_complex_output: bool
         if summation_mode == 'coherent' or len(atom_groups) <= 1:
-            # Combine all groups into one for a single coherent calculation
-            if len(atom_groups) > 1:
-                logger.debug(f"Coherent mode with {len(atom_groups)} basis groups. Combining them for SED calculation.")
-                final_group_indices = np.unique(np.concatenate(atom_groups)).astype(int)
-            elif len(atom_groups) == 1:
-                final_group_indices = atom_groups[0]
-            else: # Should not happen if fallback to all atoms works
-                final_group_indices = np.array([], dtype=int)
-
-            if final_group_indices.size == 0:
-                 logger.warning("Final atom group for SED calculation is empty. SED will be zero.")
-                 return np.zeros((n_t, len(k_vectors_3d), 3), dtype=np.complex64), freqs, True
-
-            logger.debug(f"Calculating SED coherently for {len(final_group_indices)} atoms.")
-            sed_data = self._calculate_sed_for_group(k_vectors_3d, final_group_indices, mean_pos_all)
+            full_sed_data = np.zeros((len(freqs), num_k_vectors, 3), dtype=np.complex64)
             is_complex_output = True
-        else: # Incoherent sum over multiple groups
-            logger.debug(f"Calculating SED incoherently by summing intensities from {len(atom_groups)} groups.")
-            # Initialize accumulator for summed intensities (real, positive)
-            summed_sed_intensity_data = np.zeros((n_t, len(k_vectors_3d), 3), dtype=np.float32)
-            for i_grp, grp_indices in enumerate(atom_groups):
-                logger.debug(f"  Calculating for group {i_grp+1}/{len(atom_groups)} with {len(grp_indices)} atoms.")
-                sed_group_complex = self._calculate_sed_for_group(k_vectors_3d, grp_indices, mean_pos_all)
-                summed_sed_intensity_data += np.abs(sed_group_complex)**2
-            sed_data = summed_sed_intensity_data
+        else: # incoherent
+            full_sed_data = np.zeros((len(freqs), num_k_vectors), dtype=np.float32) # Store sum of intensities
             is_complex_output = False
 
-        return sed_data.astype(np.complex64 if is_complex_output else np.float32), freqs, is_complex_output
+        if num_k_vectors == 0: # Handle empty k_vectors_3d
+            logger.warning("k_vectors_3d is empty. Returning SED object with empty SED data.")
+            # Fall through to SED object creation with empty/zero data
+
+        for i_chunk in range(num_chunks):
+            start_idx = i_chunk * actual_k_chunk_size
+            end_idx = min((i_chunk + 1) * actual_k_chunk_size, num_k_vectors)
+            current_k_vectors_chunk = k_vectors_3d[start_idx:end_idx]
+            
+            if current_k_vectors_chunk.shape[0] == 0: continue # Skip if chunk is empty
+
+            logger.debug(f"Processing k-chunk {i_chunk+1}/{num_chunks} (indices {start_idx}-{end_idx-1})")
+
+            if is_complex_output: # Coherent summation
+                if len(atom_groups) > 1:
+                    final_group_indices = np.unique(np.concatenate(atom_groups)).astype(int)
+                elif len(atom_groups) == 1:
+                    final_group_indices = atom_groups[0]
+                else: # Should not happen due to fallback
+                    final_group_indices = np.array([], dtype=int)
+
+                if final_group_indices.size == 0:
+                    logger.warning(f"Final atom group for SED k-chunk {i_chunk+1} is empty. SED chunk will be zero.")
+                    # full_sed_data is already zeros
+                    continue
+                
+                logger.debug(f"  Calculating SED coherently for {len(final_group_indices)} atoms for k-chunk {i_chunk+1}.")
+                sed_chunk_data = self._calculate_sed_for_group(current_k_vectors_chunk, final_group_indices, mean_pos_all)
+                full_sed_data[:, start_idx:end_idx, :] = sed_chunk_data
+            
+            else: # Incoherent summation
+                logger.debug(f"  Calculating SED incoherently for {len(atom_groups)} groups for k-chunk {i_chunk+1}.")
+                # Accumulator for summed intensities for the current chunk (real, positive)
+                summed_intensity_chunk = np.zeros((len(freqs), current_k_vectors_chunk.shape[0]), dtype=np.float32)
+                
+                for i_grp, grp_indices in enumerate(atom_groups):
+                    if grp_indices.size == 0:
+                        logger.debug(f"    Skipping empty atom group {i_grp+1} in k-chunk {i_chunk+1}.")
+                        continue
+                    logger.debug(f"    Calculating for group {i_grp+1}/{len(atom_groups)} with {len(grp_indices)} atoms in k-chunk {i_chunk+1}.")
+                    sed_group_complex_chunk = self._calculate_sed_for_group(current_k_vectors_chunk, grp_indices, mean_pos_all)
+                    # Sum of magnitudes squared for incoherent sum, sum over polarizations
+                    summed_intensity_chunk += np.sum(np.abs(sed_group_complex_chunk)**2, axis=-1) 
+                
+                full_sed_data[:, start_idx:end_idx] = summed_intensity_chunk
+        
+        # Construct and return SED object
+        return SED(full_sed_data, 
+                   freqs, 
+                   k_points_mags, 
+                   k_vectors_3d, # Store the original full k_vectors
+                   k_grid_shape=k_grid_shape,
+                   is_complex=is_complex_output, 
+                   phase=None) # Phase is not calculated in this method
 
     def calculate_chiral_phase(self, Z1: np.ndarray, Z2: np.ndarray, angle_range_opt: str = "C") -> np.ndarray:
         if Z1.shape != Z2.shape: 
@@ -391,7 +435,15 @@ class SEDCalculator:
             grp_types_str = np.unique(sys_atom_types[grp_atom_idx])
             logger.info(f"iSED Group {i_grp+1}/{len(recon_atom_groups)}: {len(grp_atom_idx)} atoms (types: {grp_types_str}).")
             logger.debug(f"  iSED Group {i_grp+1}: Calculating SED for {len(grp_atom_idx)} atoms.")
-            sed_group_data, freqs_group, is_complex = self.calculate(k_mags_ised, k_vecs_ised, basis_atom_indices=grp_atom_idx)
+            sed_object_group = self.calculate(k_points_mags=k_mags_ised, 
+                                            k_vectors_3d=k_vecs_ised, 
+                                            basis_atom_indices=grp_atom_idx,
+                                            k_grid_shape=None, # k-path, so no grid shape
+                                            summation_mode='coherent') # iSED typically processes groups coherently first
+            
+            sed_group_data = sed_object_group.sed
+            freqs_group = sed_object_group.freqs
+            # is_complex = sed_object_group.is_complex # Not strictly needed for current logic
             
             if ised_input_freqs_plot is None: 
                 ised_input_freqs_plot = freqs_group
@@ -506,7 +558,7 @@ class SEDCalculator:
                 'direction_label': k_dir_str, # Use the formatted k_dir_str for label consistency
                 'highlight_region': hl_info,
                 'max_freq': max_freq_ised_plot,
-                'log_intensity': True,  # Enable log scaling for intensity
+                'intensity_scale': 'sqrt',
                 'theme': plot_theme  # Pass theme to SEDPlotter
             }
             SEDPlotter(ised_plot_obj, '2d_intensity', str(ised_plot_fname), **plot_args_ised).generate_plot()
