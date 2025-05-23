@@ -113,8 +113,10 @@ class PSAMainWindow:
         
     def _create_interface(self):
         """Create the main GUI interface"""
-        # Create main paned window
-        main_pane = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        # Create main paned window with visible separator
+        main_pane = tk.PanedWindow(self.root, orient=tk.HORIZONTAL, 
+                                  sashwidth=8, sashrelief=tk.RAISED, 
+                                  bg='lightgray', sashpad=2)
         main_pane.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         # Left panel for controls
@@ -126,7 +128,7 @@ class PSAMainWindow:
     def _create_control_panel(self, parent):
         """Create the left control panel"""
         control_frame = ttk.Frame(parent, width=400)
-        parent.add(control_frame, weight=1)
+        parent.add(control_frame)
         
         # Create notebook for organized tabs
         notebook = ttk.Notebook(control_frame)
@@ -135,7 +137,7 @@ class PSAMainWindow:
         # File Input Tab
         self._create_file_tab(notebook)
         
-        # SED Parameters Tab
+        # SED Parameters Tab (now combined with k-grid)
         self._create_sed_tab(notebook)
         
         # Visualization Tab
@@ -144,10 +146,12 @@ class PSAMainWindow:
         # iSED Tab
         self._create_ised_tab(notebook)
         
+        # Remove k-grid tab as it's now combined with SED Parameters
+
     def _create_file_tab(self, notebook):
         """Create file input and basic parameters tab"""
         file_frame = ttk.Frame(notebook)
-        notebook.add(file_frame, text="Input Files")
+        notebook.add(file_frame, text="Input File")
         
         # Trajectory file selection
         ttk.Label(file_frame, text="Trajectory File:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(10,5))
@@ -203,57 +207,119 @@ class PSAMainWindow:
         ttk.Label(file_frame, textvariable=self.status_var, foreground="blue").pack(anchor="w")
         
     def _create_sed_tab(self, notebook):
-        """Create SED calculation parameters tab"""
+        """Create SED calculation parameters tab (now includes k-grid)"""
         sed_frame = ttk.Frame(notebook, padding=(10, 10))
-        notebook.add(sed_frame, text="SED Parameters")
+        notebook.add(sed_frame, text="Calculation Parameters")
+        
+        # Calculation Mode Toggle
+        ttk.Label(sed_frame, text="Calculation Mode:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(10,5))
+        self.calc_mode_var = tk.StringVar(value="K-Path")
+        calc_mode_frame = ttk.Frame(sed_frame)
+        calc_mode_frame.pack(fill="x", pady=(0,10))
+        ttk.Radiobutton(calc_mode_frame, text="K-Path", variable=self.calc_mode_var, value="K-Path", command=self._toggle_calc_mode).pack(side="left", padx=(0,20))
+        ttk.Radiobutton(calc_mode_frame, text="K-Grid", variable=self.calc_mode_var, value="K-Grid", command=self._toggle_calc_mode).pack(side="left")
+        
+        # K-Path Parameters Frame
+        self.kpath_frame = ttk.LabelFrame(sed_frame, text="K-Path Parameters")
         
         # K-path Direction specification
-        ttk.Label(sed_frame, text="K-path Direction:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(10,5))
+        ttk.Label(self.kpath_frame, text="K-path Direction:").pack(anchor="w", pady=(5,0))
         self.direction_var = tk.StringVar(value="[1,1,0]")
-        direction_entry = ttk.Entry(sed_frame, textvariable=self.direction_var)
+        direction_entry = ttk.Entry(self.kpath_frame, textvariable=self.direction_var)
         direction_entry.pack(fill="x", pady=(0,10))
         ToolTip(direction_entry, text="Specify k-path direction, e.g., [1,0,0], 'x', or 'xy'.\nFor 3D vectors like [h,k,l], ensure values are integers or floats.")
         
-        # K-path parameters
-        ttk.Label(sed_frame, text="K-path Parameters:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(10,5))
-        
         # Number of k-points
-        ttk.Label(sed_frame, text="Number of k-points:").pack(anchor="w")
+        ttk.Label(self.kpath_frame, text="Number of k-points:").pack(anchor="w")
         self.n_k_var = tk.IntVar(value=250)
-        # Register validation command
-        validate_int_cmd = (sed_frame.register(self._validate_int_input), '%P') # %P is value if edit is allowed
-        nk_entry = ttk.Entry(sed_frame, textvariable=self.n_k_var, validate='key', validatecommand=validate_int_cmd)
+        validate_int_cmd = (self.kpath_frame.register(self._validate_int_input), '%P')
+        nk_entry = ttk.Entry(self.kpath_frame, textvariable=self.n_k_var, validate='key', validatecommand=validate_int_cmd)
         nk_entry.pack(fill="x", pady=(0,5))
         ToolTip(nk_entry, text="Number of k-points along the specified k-path (integer > 0).")
         
         # BZ coverage
-        ttk.Label(sed_frame, text="Brillouin Zone Coverage:").pack(anchor="w")
+        ttk.Label(self.kpath_frame, text="Brillouin Zone Coverage:").pack(anchor="w")
         self.bz_coverage_var = tk.DoubleVar(value=4.0)
-        ttk.Entry(sed_frame, textvariable=self.bz_coverage_var).pack(fill="x", pady=(0,5))
+        ttk.Entry(self.kpath_frame, textvariable=self.bz_coverage_var).pack(fill="x", pady=(0,10))
+        
+        # K-Grid Parameters Frame
+        self.kgrid_frame = ttk.LabelFrame(sed_frame, text="K-Grid Parameters")
+        
+        # Plane selector
+        plane_frame = ttk.Frame(self.kgrid_frame)
+        plane_frame.pack(fill="x", pady=(5,5))
+        ttk.Label(plane_frame, text="Plane:").pack(side="left")
+        self.kgrid_plane_var = tk.StringVar(value="xy")
+        plane_combo = ttk.Combobox(plane_frame, textvariable=self.kgrid_plane_var, values=["xy", "yz", "zx"], state="readonly", width=6)
+        plane_combo.pack(side="left", padx=(5,0))
+        plane_combo.bind("<<ComboboxSelected>>", lambda event: self._update_kgrid_axis_controls())
+        
+        # K-grid axis controls (will be populated by _update_kgrid_axis_controls)
+        self.kgrid_kx_min_var = tk.DoubleVar(value=-1.0)
+        self.kgrid_kx_max_var = tk.DoubleVar(value=1.0)
+        self.kgrid_ky_min_var = tk.DoubleVar(value=-1.0)
+        self.kgrid_ky_max_var = tk.DoubleVar(value=1.0)
+        self.kgrid_kz_val_var = tk.DoubleVar(value=0.0)
+        
+        # Create axis control widgets
+        axis_grid_frame = ttk.Frame(self.kgrid_frame)
+        axis_grid_frame.pack(fill="x", pady=(5,10))
+        
+        self.kgrid_axis_labels = {}
+        self.kgrid_axis_entries = {}
+        # kx min/max
+        self.kgrid_axis_labels['kx_min'] = ttk.Label(axis_grid_frame, text="kx min:")
+        self.kgrid_axis_entries['kx_min'] = ttk.Entry(axis_grid_frame, textvariable=self.kgrid_kx_min_var, width=8)
+        self.kgrid_axis_labels['kx_max'] = ttk.Label(axis_grid_frame, text="kx max:")
+        self.kgrid_axis_entries['kx_max'] = ttk.Entry(axis_grid_frame, textvariable=self.kgrid_kx_max_var, width=8)
+        # ky min/max
+        self.kgrid_axis_labels['ky_min'] = ttk.Label(axis_grid_frame, text="ky min:")
+        self.kgrid_axis_entries['ky_min'] = ttk.Entry(axis_grid_frame, textvariable=self.kgrid_ky_min_var, width=8)
+        self.kgrid_axis_labels['ky_max'] = ttk.Label(axis_grid_frame, text="ky max:")
+        self.kgrid_axis_entries['ky_max'] = ttk.Entry(axis_grid_frame, textvariable=self.kgrid_ky_max_var, width=8)
+        # kz (fixed)
+        self.kgrid_axis_labels['kz_fixed'] = ttk.Label(axis_grid_frame, text="kz (fixed):")
+        self.kgrid_axis_entries['kz_fixed'] = ttk.Entry(axis_grid_frame, textvariable=self.kgrid_kz_val_var, width=8)
+        
+        # Grid size
+        grid_size_frame = ttk.Frame(self.kgrid_frame)
+        grid_size_frame.pack(fill="x", pady=(0,10))
+        self.kgrid_n_kx_label = ttk.Label(grid_size_frame, text="n_kx:")
+        self.kgrid_n_kx_label.pack(side="left")
+        self.kgrid_n_kx_var = tk.IntVar(value=40)
+        ttk.Entry(grid_size_frame, textvariable=self.kgrid_n_kx_var, width=8).pack(side="left", padx=(5,15))
+        self.kgrid_n_ky_label = ttk.Label(grid_size_frame, text="n_ky:")
+        self.kgrid_n_ky_label.pack(side="left")
+        self.kgrid_n_ky_var = tk.IntVar(value=40)
+        ttk.Entry(grid_size_frame, textvariable=self.kgrid_n_ky_var, width=8).pack(side="left", padx=(5,0))
+        
+        # Common Parameters (always shown)
+        common_frame = ttk.LabelFrame(sed_frame, text="Common Parameters")
+        common_frame.pack(fill="x", pady=(10,0))
         
         # Basis atoms
-        ttk.Label(sed_frame, text="Basis Atom Types (comma-separated, empty for all):").pack(anchor="w")
+        ttk.Label(common_frame, text="Basis Atom Types (comma-separated, empty for all):").pack(anchor="w", pady=(5,0))
         self.basis_types_var = tk.StringVar()
-        basis_types_entry = ttk.Entry(sed_frame, textvariable=self.basis_types_var)
+        basis_types_entry = ttk.Entry(common_frame, textvariable=self.basis_types_var)
         basis_types_entry.pack(fill="x", pady=(0,10))
         ToolTip(basis_types_entry, text="Comma-separated list of atom types to include in SED calculation (e.g., '1,2').\nLeave empty to use all atom types.")
 
         # Summation mode
-        ttk.Label(sed_frame, text="Summation Mode:").pack(anchor="w", pady=(5,0))
+        ttk.Label(common_frame, text="Summation Mode:").pack(anchor="w", pady=(5,0))
         self.summation_mode_var = tk.StringVar(value="coherent")
-        summation_mode_combo = ttk.Combobox(sed_frame, textvariable=self.summation_mode_var,
+        summation_mode_combo = ttk.Combobox(common_frame, textvariable=self.summation_mode_var,
                                    values=["coherent", "incoherent"], state="readonly")
         summation_mode_combo.pack(fill="x", pady=(0,10))
         ToolTip(summation_mode_combo, text="Mode for summing atomic contributions to SED:\n- coherent: Sum complex amplitudes (default)\n- incoherent: Sum squared magnitudes")
         
-        # Chiral SED options
+        # Chirality options (only for K-Path) - moved to be direct child of sed_frame
+        self.chirality_frame = ttk.LabelFrame(sed_frame, text="Chirality Options")
         self.chiral_sed_var = tk.BooleanVar(value=False)
-        chiral_check = ttk.Checkbutton(sed_frame, text="Calculate Chirality", variable=self.chiral_sed_var, command=self._toggle_chiral_options)
-        chiral_check.pack(anchor="w", pady=(10,0))
+        chiral_check = ttk.Checkbutton(self.chirality_frame, text="Calculate Chirality", variable=self.chiral_sed_var, command=self._toggle_chiral_options)
+        chiral_check.pack(anchor="w", pady=(5,0))
         ToolTip(chiral_check, text="Enable to calculate chirality (requires coherent summation).")
 
-        self.chiral_options_frame = ttk.Frame(sed_frame)
-        # Chiral phase polarization selection (only shown if chiral SED is checked)
+        self.chiral_options_frame = ttk.Frame(self.chirality_frame)
         ttk.Label(self.chiral_options_frame, text="Chiral Axis:").pack(anchor="w", pady=(5,0))
         self.chiral_axis_var = tk.StringVar(value="z")
         self.chiral_axis_combo = ttk.Combobox(self.chiral_options_frame, textvariable=self.chiral_axis_var,
@@ -261,85 +327,107 @@ class PSAMainWindow:
         self.chiral_axis_combo.pack(fill="x", pady=(0,5))
         ToolTip(self.chiral_axis_combo, text="Select the chiral axis. The phase will be calculated using the two orthogonal polarizations.")
         
-        # Calculate SED button
+        # Set initial mode
+        self._update_kgrid_axis_controls()
+        
+        # Spacer to push Calculate SED button to bottom
+        self.sed_spacer_frame = ttk.Frame(sed_frame)
+        self.sed_spacer_frame.pack(fill="both", expand=True)
+        
+        # Now set the calculation mode (after spacer frame exists)
+        self._toggle_calc_mode()
+        
+        # Calculate SED button (moved to bottom for better UX)
         self.calc_sed_button = ttk.Button(sed_frame, text="Calculate SED", 
                                          command=self._calculate_sed, state="disabled")
-        self.calc_sed_button.pack(fill="x", pady=(20,10))
+        self.calc_sed_button.pack(fill="x", pady=(30,10), side="bottom")
         
         # SED status
         self.sed_status_var = tk.StringVar(value="No SED calculated")
-        ttk.Label(sed_frame, textvariable=self.sed_status_var, foreground="blue").pack(anchor="w")
+        ttk.Label(sed_frame, textvariable=self.sed_status_var, foreground="blue").pack(anchor="w", side="bottom")
 
-        # Set initial visibility of chiral options frame (now empty, so effectively does nothing)
-        # self._toggle_chiral_options() # This can be removed as chiral_options_frame is empty
-        
     def _create_viz_tab(self, notebook):
         """Create visualization parameters tab"""
         viz_frame = ttk.Frame(notebook)
-        notebook.add(viz_frame, text="Visualization")
+        notebook.add(viz_frame, text="Plot Parameters")
 
-        # Plot Mode (always at top, always enabled)
-        ttk.Label(viz_frame, text="Plot Mode:").pack(anchor="w", pady=(10,0))
-        self.plot_display_mode_var = tk.StringVar(value="SED")
-        self.plot_display_combo = ttk.Combobox(viz_frame, textvariable=self.plot_display_mode_var,
-                                               values=["SED"], state="readonly")
-        self.plot_display_combo.pack(fill="x", pady=(0,10))
-        self.plot_display_combo.bind("<<ComboboxSelected>>", lambda event: (self._update_viz_controls_state(), self._generate_sed_plot()))
-        ToolTip(self.plot_display_combo, text="Select whether to display SED or chirality (if available).")
-
-        # Plot Parameters section
-        ttk.Label(viz_frame, text="Plot Parameters:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(0,5))
-
-        # Max frequency
-        ttk.Label(viz_frame, text="Max Frequency (THz, empty for auto):").pack(anchor="w")
+        # Max frequency (shared for both K-Path and K-Grid) - FIRST
+        ttk.Label(viz_frame, text="Max Frequency (THz, empty for auto):").pack(anchor="w", pady=(10,0))
         self.max_freq_var = tk.StringVar()
         max_freq_entry = ttk.Entry(viz_frame, textvariable=self.max_freq_var)
-        max_freq_entry.pack(fill="x", pady=(0,5))
-        ToolTip(max_freq_entry, text="Maximum frequency (THz) to display on the SED plot.\nLeave empty for automatic scaling based on data.")
+        max_freq_entry.pack(fill="x", pady=(0,10))
+        max_freq_entry.bind('<Return>', lambda event: self._on_max_freq_change())
+        max_freq_entry.bind('<FocusOut>', lambda event: self._on_max_freq_change())
+        ToolTip(max_freq_entry, text="Maximum frequency (THz) to display on plots.\nLeave empty for automatic scaling based on data.")
 
-        # Intensity scaling
+        # Plot Chiral toggle button (only shown when chiral data is available) - SECOND
+        self.plot_chiral_frame = ttk.Frame(viz_frame)
+        # Don't pack initially - will be shown by _update_viz_controls_state when chiral data is available
+        self.plot_chiral_var = tk.BooleanVar(value=False)
+        self.plot_chiral_button = ttk.Checkbutton(self.plot_chiral_frame, text="Plot Chiral", 
+                                                 variable=self.plot_chiral_var, 
+                                                 command=self._on_plot_chiral_toggle)
+        self.plot_chiral_button.pack(anchor="w", pady=(0,10))
+        ToolTip(self.plot_chiral_button, text="Toggle to display chirality instead of SED intensity.")
+
+        # Intensity scaling (shown for both modes) - THIRD
         ttk.Label(viz_frame, text="Intensity Scaling:").pack(anchor="w")
         self.intensity_scale_var = tk.StringVar(value="dsqrt")
         scale_combo = ttk.Combobox(viz_frame, textvariable=self.intensity_scale_var,
                                   values=["linear", "log", "sqrt", "dsqrt"], state="readonly")
-        scale_combo.pack(fill="x", pady=(0,5))
-        self.intensity_scale_combo = scale_combo # For state management
+        scale_combo.pack(fill="x", pady=(0,10))
+        self.intensity_scale_combo = scale_combo
+        self.intensity_scale_combo.bind("<<ComboboxSelected>>", lambda event: self._on_intensity_scale_change())
 
-        # Intensity Colormap
+        # Intensity Colormap (adapt based on mode) - FOURTH
         ttk.Label(viz_frame, text="Intensity Colormap:").pack(anchor="w")
         self.colormap_var = tk.StringVar(value="inferno")
         cmap_combo = ttk.Combobox(viz_frame, textvariable=self.colormap_var,
                                  values=["inferno", "viridis", "plasma", "magma", "hot", "jet"], 
                                  state="readonly")
-        cmap_combo.pack(fill="x", pady=(0,5))
+        cmap_combo.pack(fill="x", pady=(0,10))
         ToolTip(cmap_combo, text="Colormap for SED intensity plot.")
-        self.intensity_colormap_combo = cmap_combo # Store for state management
+        self.intensity_colormap_combo = cmap_combo
         self.intensity_colormap_combo.bind("<<ComboboxSelected>>", lambda event: self._on_intensity_colormap_change())
 
-        # Phase Colormap (immediately below intensity colormap)
-        ttk.Label(viz_frame, text="Phase Colormap:").pack(anchor="w")
-        self.phase_colormap_label = viz_frame.winfo_children()[-1] # Last label
-        self.phase_colormap_var = tk.StringVar(value="coolwarm") # Default for phase
+        # Phase Colormap (only shown when chiral toggle is enabled) - FIFTH
+        self.phase_colormap_frame = ttk.Frame(viz_frame)
+        # Don't pack initially - will be shown when chiral toggle is enabled
+        ttk.Label(self.phase_colormap_frame, text="Phase Colormap:").pack(anchor="w")
+        self.phase_colormap_var = tk.StringVar(value="coolwarm")
         diverging_cmaps = ['coolwarm', 'hsv', 'bwr', 'RdBu', 'RdGy', 'PiYG', 'seismic', 'twilight', 'twilight_shifted']
-        self.phase_colormap_combo = ttk.Combobox(viz_frame, textvariable=self.phase_colormap_var,
-                                             values=diverging_cmaps, state="disabled")
-        self.phase_colormap_combo.pack(fill="x", pady=(0,5))
+        self.phase_colormap_combo = ttk.Combobox(self.phase_colormap_frame, textvariable=self.phase_colormap_var,
+                                             values=diverging_cmaps, state="readonly")
+        self.phase_colormap_combo.pack(fill="x", pady=(0,10))
         ToolTip(self.phase_colormap_combo, text="Colormap for chirality plot (diverging/circular preferred).")
         self.phase_colormap_combo.bind("<<ComboboxSelected>>", lambda event: self._generate_sed_plot())
 
-        # Generate plot button (move here, before any _update_viz_controls_state calls)
-        self.plot_button = ttk.Button(viz_frame, text="Generate SED Plot", 
-                                     command=self._generate_sed_plot, state="disabled")
-        self.plot_button.pack(fill="x", pady=(20,10))
+        # Global Intensity Scaling (only for K-Grid)
+        self.global_scale_frame = ttk.Frame(viz_frame)
+        # Don't pack initially - will be shown by _update_viz_controls_state
+        self.kgrid_global_scale_var = tk.BooleanVar(value=False)
+        global_scale_check = ttk.Checkbutton(self.global_scale_frame, text="Global Intensity Scaling", 
+                                           variable=self.kgrid_global_scale_var, 
+                                           command=lambda: self._plot_kgrid_heatmap(self.kgrid_freq_slider.get()) if hasattr(self, 'kgrid_freq_slider') else None)
+        global_scale_check.pack(anchor="w", pady=(0,10))
+        
+        # Spacer to push Generate Plot button to bottom
+        self.viz_spacer_frame = ttk.Frame(viz_frame)
+        self.viz_spacer_frame.pack(fill="both", expand=True)
 
         # Plot status
         self.plot_status_var = tk.StringVar(value="No plot generated")
-        ttk.Label(viz_frame, textvariable=self.plot_status_var, foreground="blue").pack(anchor="w")
-        
+        ttk.Label(viz_frame, textvariable=self.plot_status_var, foreground="blue").pack(anchor="w", side="bottom")
+
+        # Generate plot button (moved to bottom for better UX)
+        self.plot_button = ttk.Button(viz_frame, text="Generate Plot", 
+                                     command=self._generate_plot, state="disabled")
+        self.plot_button.pack(fill="x", pady=(20,10), side="bottom")
+
     def _create_ised_tab(self, notebook):
         """Create iSED reconstruction parameters tab"""
         ised_frame = ttk.Frame(notebook)
-        notebook.add(ised_frame, text="iSED Reconstruction")
+        notebook.add(ised_frame, text="Atomic Visualization")
         
         ttk.Label(ised_frame, text="Click Parameters:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(10,5))
         
@@ -468,7 +556,7 @@ class PSAMainWindow:
     def _create_plot_panel(self, parent):
         """Create the right panel for plots"""
         plot_frame = ttk.Frame(parent)
-        parent.add(plot_frame, weight=3)
+        parent.add(plot_frame)
         
         # Create notebook for multiple plots
         self.plot_notebook = ttk.Notebook(plot_frame)
@@ -479,11 +567,11 @@ class PSAMainWindow:
         
         # iSED Plot Tab  
         self._create_ised_plot_tab()
-        
+
     def _create_sed_plot_tab(self):
         """Create SED plot display tab"""
         self.sed_plot_frame = ttk.Frame(self.plot_notebook)
-        self.plot_notebook.add(self.sed_plot_frame, text="SED Dispersion")
+        self.plot_notebook.add(self.sed_plot_frame, text="Reciprocal Space")
         
         # Create matplotlib figure for SED with better size and layout
         self.sed_fig = Figure(figsize=(8, 8), dpi=100)  # Adjusted for a more square figure, can be tuned
@@ -508,7 +596,7 @@ class PSAMainWindow:
     def _create_ised_plot_tab(self):
         """Create iSED visualization tab"""
         self.ised_plot_frame = ttk.Frame(self.plot_notebook)
-        self.plot_notebook.add(self.ised_plot_frame, text="Atomic Motion")
+        self.plot_notebook.add(self.ised_plot_frame, text="Real Space")
         
         # Full width atomic motion visualization
         header_frame = ttk.Frame(self.ised_plot_frame)
@@ -615,17 +703,26 @@ class PSAMainWindow:
         thread.start()
         
     def _calculate_sed(self):
-        """Calculate SED dispersion"""
+        """Calculate SED dispersion or k-grid based on mode"""
         if not self.sed_calculator:
             messagebox.showerror("Error", "Please load a trajectory first")
             return
-            
+        
+        calc_mode = self.calc_mode_var.get()
+        
+        if calc_mode == "K-Path":
+            self._calculate_kpath_sed()
+        else:  # K-Grid
+            self._calculate_kgrid_sed()
+
+    def _calculate_kpath_sed(self):
+        """Calculate K-Path SED dispersion"""
         def calc_worker():
             try:
                 # Thread-safe GUI updates
-                self.root.after(0, lambda: self.sed_status_var.set("Calculating SED..."))
+                self.root.after(0, lambda: self.sed_status_var.set("Calculating K-Path SED..."))
                 
-                # Parse direction
+                # Parse direction (existing logic)
                 direction_str = self.direction_var.get().strip()
                 try:
                     if direction_str.startswith('[') and direction_str.endswith(']'):
@@ -655,12 +752,12 @@ class PSAMainWindow:
                     n_k=self.n_k_var.get()
                 )
                 
-                # Determine summation mode
+                # Rest of existing k-path calculation logic...
                 summation_mode_to_use = self.summation_mode_var.get()
                 if self.chiral_sed_var.get():
                     if summation_mode_to_use != 'coherent':
-                        logger.info("Chiral SED calculation selected, forcing coherent summation mode.")
-                        summation_mode_to_use = 'coherent' # Chiral phase requires coherent complex SED
+                        logger.info("Chirality calculation selected, forcing coherent summation mode.")
+                        summation_mode_to_use = 'coherent'
 
                 calc_kwargs = {
                     'k_points_mags': k_mags,
@@ -669,24 +766,20 @@ class PSAMainWindow:
                     'summation_mode': summation_mode_to_use
                 }
                 
-                # Step 1: Calculate base SED (always coherent if chiral is desired)
                 sed_object = self.sed_calculator.calculate(**calc_kwargs)
                 logger.info(f"Base SED calculation complete with {summation_mode_to_use} mode.")
 
-                calculated_phase = None # Initialize phase variable
-
-                # Step 2: If chiral SED is enabled, calculate chiral phase
+                calculated_phase = None
                 if self.chiral_sed_var.get():
                     if hasattr(sed_object, 'sed') and sed_object.sed is not None and sed_object.is_complex:
                         if sed_object.sed.ndim == 3 and sed_object.sed.shape[-1] >= 2:
-                            # Get chiral axis and use the two orthogonal polarizations
                             axis = self.chiral_axis_var.get()
                             if axis == 'x':
-                                idx1, idx2 = 1, 2  # y, z
+                                idx1, idx2 = 1, 2
                             elif axis == 'y':
-                                idx1, idx2 = 0, 2  # x, z
-                            else:  # 'z'
-                                idx1, idx2 = 0, 1  # x, y
+                                idx1, idx2 = 0, 2
+                            else:
+                                idx1, idx2 = 0, 1
                             Z1 = sed_object.sed[:,:,idx1]
                             Z2 = sed_object.sed[:,:,idx2]
                             logger.info(f"Calculating chiral phase using axis {axis} (components {idx1} and {idx2}).")
@@ -694,12 +787,7 @@ class PSAMainWindow:
                                 Z1=Z1, Z2=Z2, angle_range_opt="C"
                             )
                             logger.info("Chiral phase calculation complete.")
-                        else:
-                            logger.warning("SED data for chiral phase calculation is not in the expected format (ndim=3, at least 2 components).")
-                    else:
-                        logger.warning("Cannot calculate chiral phase: base SED is not complex or data is missing.")
-
-                # Store the final SED object, potentially with phase information
+                
                 self.sed_result = SED(
                     sed=sed_object.sed,
                     freqs=sed_object.freqs,
@@ -710,12 +798,10 @@ class PSAMainWindow:
                     is_complex=sed_object.is_complex
                 )
                 
-                # Update plot display options based on whether phase was calculated
-                if calculated_phase is not None:
-                    self.plot_display_combo.config(values=["SED", "Chirality"], state="readonly")
-                else:
-                    self.plot_display_combo.config(values=["SED"], state="disabled")
-                    self.plot_display_mode_var.set("SED")
+                # Store calculation type
+                self.sed_calculation_type = "K-Path"
+                
+                # Update visualization controls based on available data
                 self._update_viz_controls_state() # Call to update controls
 
                 self.root.after(0, lambda: self.sed_status_var.set("SED calculation complete"))
@@ -775,14 +861,15 @@ class PSAMainWindow:
             colorbar_label = "Intensity" # Default
             data_to_plot = None
 
-            current_display_mode = self.plot_display_mode_var.get()
-            # Determine effective_cmap based on current_display_mode
-            if current_display_mode == "Chirality":
+            # Use chiral toggle instead of dropdown
+            plot_chiral = self.plot_chiral_var.get()
+            # Determine effective_cmap based on chiral toggle
+            if plot_chiral:
                 effective_cmap = self.phase_colormap_var.get()
             else: # SED mode
                 effective_cmap = self.colormap_var.get()
 
-            if current_display_mode == "Chirality":
+            if plot_chiral:
                 if is_chiral_plot and hasattr(self.sed_result, 'phase') and self.sed_result.phase is not None:
                     data_to_plot = self.sed_result.phase[positive_freq_mask, :]
                     colorbar_label = "Phase Angle (radians)"
@@ -791,9 +878,9 @@ class PSAMainWindow:
                 else:
                     messagebox.showerror("Plot Error", "Chirality plot selected, but phase data is not available.")
                     self.plot_status_var.set("Error: Chirality data unavailable.")
-                    self.plot_display_mode_var.set("SED")
-                    current_display_mode = "SED"
-            if current_display_mode == "SED":
+                    self.plot_chiral_var.set(False)  # Reset toggle
+                    plot_chiral = False
+            if not plot_chiral:  # SED mode
                 if is_chiral_plot:
                     if not self.sed_result.is_complex:
                         messagebox.showerror("Plot Error", "Chirality plot selected, but SED data is not complex.")
@@ -816,6 +903,8 @@ class PSAMainWindow:
                         logger.info("Plotting incoherent SED.")
                     colorbar_label = "Intensity"
                     plot_title = "SED - Click to select (k,ω) point"
+                
+                # Apply intensity scaling only for SED (not for chirality/phase)
                 scale_type = self.intensity_scale_var.get()
                 if scale_type == "log":
                     data_to_plot = np.log10(np.maximum(data_to_plot, 1e-12))
@@ -1101,7 +1190,7 @@ class PSAMainWindow:
                     self.view_motion_button.config(state="normal")
                     self.ised_button.config(state="normal")
                     
-                    # Switch to Atomic Motion tab
+                    # Switch to Real Space tab
                     self.plot_notebook.select(1)
                     
                 except Exception as e:
@@ -1589,37 +1678,48 @@ class PSAMainWindow:
                 logger.error(f"Error cleaning up temp directory {self.current_temp_ised_dir} (fallback): {e}")
 
     def _toggle_chiral_options(self):
+        """Toggle chirality sub-options display"""
         if self.chiral_sed_var.get():
-            self.chiral_options_frame.pack(fill="x", pady=(0,10), before=self.calc_sed_button)
+            self.chiral_options_frame.pack(fill="x", pady=(0,10))
         else:
             self.chiral_options_frame.pack_forget()
 
     def _update_viz_controls_state(self):
-        """Update state of visualization controls based on plot mode and data."""
-        mode = self.plot_display_mode_var.get()
-        has_phase_data = self.sed_result is not None and hasattr(self.sed_result, 'phase') and self.sed_result.phase is not None
-
-        # Plot Display Mode combobox is always enabled
-        self.plot_display_combo.config(state="readonly")
-
-        # SED controls enabled only for SED mode
-        if mode == "SED":
-            self.intensity_colormap_combo.config(state="readonly")
-            self.intensity_scale_combo.config(state="readonly")
-            self.phase_colormap_combo.config(state="disabled")
-        # Phase controls enabled only for Phase mode
-        elif mode == "Chirality" and has_phase_data:
-            self.intensity_colormap_combo.config(state="disabled")
-            self.intensity_scale_combo.config(state="disabled")
-            self.phase_colormap_combo.config(state="readonly")
-        else:
-            # Fallback: disable all except plot display
-            self.intensity_colormap_combo.config(state="disabled")
-            self.intensity_scale_combo.config(state="disabled")
-            self.phase_colormap_combo.config(state="disabled")
+        """Update state of visualization controls based on calculation mode and data."""
+        if not hasattr(self, 'sed_calculation_type'):
+            return
+            
+        calc_type = self.sed_calculation_type
+        
+        if calc_type == "K-Path":
+            # Hide K-Grid specific controls
+            self.global_scale_frame.pack_forget()
+            
+            # Handle chiral toggle button
+            has_phase_data = self.sed_result is not None and hasattr(self.sed_result, 'phase') and self.sed_result.phase is not None
+            if has_phase_data:
+                # Show the chiral toggle button
+                self.plot_chiral_frame.pack(fill="x", pady=(0,10), before=self.viz_spacer_frame)
+                # If toggle is currently enabled, show phase colormap
+                if self.plot_chiral_var.get():
+                    self.phase_colormap_frame.pack(fill="x", pady=(0,10), before=self.viz_spacer_frame)
+                else:
+                    self.phase_colormap_frame.pack_forget()
+            else:
+                # Hide chiral controls if no chiral data
+                self.plot_chiral_frame.pack_forget()
+                self.phase_colormap_frame.pack_forget()
+                self.plot_chiral_var.set(False)  # Reset toggle state
+                
+        else:  # K-Grid
+            # Show K-Grid specific controls, hide K-Path specific ones
+            self.plot_chiral_frame.pack_forget()
+            self.phase_colormap_frame.pack_forget()
+            self.plot_chiral_var.set(False)  # Reset toggle state
+            self.global_scale_frame.pack(fill="x", pady=(0,10), before=self.viz_spacer_frame)
 
         # Plot button state depends if any SED result is available
-        if self.sed_result:
+        if hasattr(self, 'sed_result') and self.sed_result:
             self.plot_button.config(state="normal")
         else:
             self.plot_button.config(state="disabled")
@@ -1640,9 +1740,520 @@ class PSAMainWindow:
             return False
 
     def _on_intensity_colormap_change(self):
-        """Update plot if Intensity colormap is changed and mode is Intensity."""
-        if self.plot_display_mode_var.get() == "SED":
+        """Update plot if Intensity colormap is changed."""
+        if not hasattr(self, 'sed_calculation_type'):
+            return
+            
+        if self.sed_calculation_type == "K-Path":
+            # For k-path, regenerate the plot
             self._generate_sed_plot()
+        elif self.sed_calculation_type == "K-Grid":
+            # For k-grid, regenerate the heatmap at current frequency
+            if hasattr(self, 'kgrid_freq_slider') and hasattr(self, 'kgrid_freqs'):
+                current_freq = self.kgrid_freq_slider.get()
+                freq_idx = np.argmin(np.abs(self.kgrid_freqs - current_freq))
+                self._plot_kgrid_heatmap(freq_idx)
+
+    def _on_intensity_scale_change(self):
+        """Update plot when intensity scaling is changed."""
+        # Clear cached global scaling values when intensity scaling changes
+        if hasattr(self, '_cached_global_vmin'):
+            delattr(self, '_cached_global_vmin')
+        if hasattr(self, '_cached_global_vmax'):
+            delattr(self, '_cached_global_vmax')
+        if hasattr(self, '_cached_scale_type'):
+            delattr(self, '_cached_scale_type')
+            
+        if not hasattr(self, 'sed_calculation_type'):
+            return
+            
+        if self.sed_calculation_type == "K-Path":
+            # For k-path, regenerate based on current mode
+            self._generate_sed_plot()
+        elif self.sed_calculation_type == "K-Grid":
+            # For k-grid, regenerate the heatmap at current frequency
+            if hasattr(self, 'kgrid_freq_slider') and hasattr(self, 'kgrid_freqs'):
+                current_freq = self.kgrid_freq_slider.get()
+                freq_idx = np.argmin(np.abs(self.kgrid_freqs - current_freq))
+                self._plot_kgrid_heatmap(freq_idx)
+
+    def _on_plot_chiral_toggle(self):
+        """Handle plot chiral toggle button changes."""
+        if self.plot_chiral_var.get():
+            # Show phase colormap when chiral is enabled
+            self.phase_colormap_frame.pack(fill="x", pady=(0,10), before=self.viz_spacer_frame)
+        else:
+            # Hide phase colormap when chiral is disabled
+            self.phase_colormap_frame.pack_forget()
+        
+        # Update the plot if we have data
+        if hasattr(self, 'sed_calculation_type') and self.sed_calculation_type == "K-Path":
+            self._generate_sed_plot()
+
+    def _update_kgrid_axis_controls(self):
+        """Update axis labels and entry states based on selected plane."""
+        plane = self.kgrid_plane_var.get()
+        # Reset all to normal
+        for key in self.kgrid_axis_entries:
+            self.kgrid_axis_entries[key].config(state="normal")
+            self.kgrid_axis_labels[key].config(foreground="black")
+        # Hide all
+        for key in self.kgrid_axis_labels:
+            self.kgrid_axis_labels[key].grid_remove()
+        for key in self.kgrid_axis_entries:
+            self.kgrid_axis_entries[key].grid_remove()
+        
+        # Update n_kx and n_ky labels based on plane
+        if plane == "xy":
+            self.kgrid_n_kx_label.config(text="n_kx:")
+            self.kgrid_n_ky_label.config(text="n_ky:")
+        elif plane == "yz":
+            self.kgrid_n_kx_label.config(text="n_ky:")
+            self.kgrid_n_ky_label.config(text="n_kz:")
+        elif plane == "zx":
+            self.kgrid_n_kx_label.config(text="n_kz:")
+            self.kgrid_n_ky_label.config(text="n_kx:")
+        
+        # Position widgets based on plane
+        if plane == "xy":
+            # Show kx min/max, ky min/max, kz (fixed)
+            self.kgrid_axis_labels['kx_min'].config(text="kx min:")
+            self.kgrid_axis_labels['kx_min'].grid(row=0, column=0, sticky="w", padx=2)
+            self.kgrid_axis_entries['kx_min'].grid(row=0, column=1, sticky="w", padx=2)
+            self.kgrid_axis_labels['kx_max'].config(text="kx max:")
+            self.kgrid_axis_labels['kx_max'].grid(row=0, column=2, sticky="w", padx=2)
+            self.kgrid_axis_entries['kx_max'].grid(row=0, column=3, sticky="w", padx=2)
+            self.kgrid_axis_labels['ky_min'].config(text="ky min:")
+            self.kgrid_axis_labels['ky_min'].grid(row=1, column=0, sticky="w", padx=2)
+            self.kgrid_axis_entries['ky_min'].grid(row=1, column=1, sticky="w", padx=2)
+            self.kgrid_axis_labels['ky_max'].config(text="ky max:")
+            self.kgrid_axis_labels['ky_max'].grid(row=1, column=2, sticky="w", padx=2)
+            self.kgrid_axis_entries['ky_max'].grid(row=1, column=3, sticky="w", padx=2)
+            self.kgrid_axis_labels['kz_fixed'].config(text="kz (fixed):")
+            self.kgrid_axis_labels['kz_fixed'].grid(row=2, column=0, sticky="w", padx=2)
+            self.kgrid_axis_entries['kz_fixed'].grid(row=2, column=1, sticky="w", padx=2)
+        elif plane == "yz":
+            # Show ky min/max, kz min/max, kx (fixed)
+            self.kgrid_axis_labels['ky_min'].config(text="ky min:")
+            self.kgrid_axis_labels['ky_min'].grid(row=0, column=0, sticky="w", padx=2)
+            self.kgrid_axis_entries['ky_min'].grid(row=0, column=1, sticky="w", padx=2)
+            self.kgrid_axis_labels['ky_max'].config(text="ky max:")
+            self.kgrid_axis_labels['ky_max'].grid(row=0, column=2, sticky="w", padx=2)
+            self.kgrid_axis_entries['ky_max'].grid(row=0, column=3, sticky="w", padx=2)
+            self.kgrid_axis_labels['kz_fixed'].config(text="kz min:")
+            self.kgrid_axis_labels['kz_fixed'].grid(row=1, column=0, sticky="w", padx=2)
+            self.kgrid_axis_entries['kz_fixed'].grid(row=1, column=1, sticky="w", padx=2)
+            self.kgrid_axis_labels['kx_min'].config(text="kz max:")
+            self.kgrid_axis_labels['kx_min'].grid(row=1, column=2, sticky="w", padx=2)
+            self.kgrid_axis_entries['kx_min'].grid(row=1, column=3, sticky="w", padx=2)
+            self.kgrid_axis_labels['kx_max'].config(text="kx (fixed):")
+            self.kgrid_axis_labels['kx_max'].grid(row=2, column=0, sticky="w", padx=2)
+            self.kgrid_axis_entries['kx_max'].grid(row=2, column=1, sticky="w", padx=2)
+        elif plane == "zx":
+            # Show kz min/max, kx min/max, ky (fixed)
+            self.kgrid_axis_labels['kz_fixed'].config(text="kz min:")
+            self.kgrid_axis_labels['kz_fixed'].grid(row=0, column=0, sticky="w", padx=2)
+            self.kgrid_axis_entries['kz_fixed'].grid(row=0, column=1, sticky="w", padx=2)
+            self.kgrid_axis_labels['kx_min'].config(text="kz max:")
+            self.kgrid_axis_labels['kx_min'].grid(row=0, column=2, sticky="w", padx=2)
+            self.kgrid_axis_entries['kx_min'].grid(row=0, column=3, sticky="w", padx=2)
+            self.kgrid_axis_labels['ky_min'].config(text="kx min:")
+            self.kgrid_axis_labels['ky_min'].grid(row=1, column=0, sticky="w", padx=2)
+            self.kgrid_axis_entries['ky_min'].grid(row=1, column=1, sticky="w", padx=2)
+            self.kgrid_axis_labels['ky_max'].config(text="kx max:")
+            self.kgrid_axis_labels['ky_max'].grid(row=1, column=2, sticky="w", padx=2)
+            self.kgrid_axis_entries['ky_max'].grid(row=1, column=3, sticky="w", padx=2)
+            self.kgrid_axis_labels['kx_max'].config(text="ky (fixed):")
+            self.kgrid_axis_labels['kx_max'].grid(row=2, column=0, sticky="w", padx=2)
+            self.kgrid_axis_entries['kx_max'].grid(row=2, column=1, sticky="w", padx=2)
+
+    def _toggle_calc_mode(self):
+        """Toggle between K-Path and K-Grid parameter display"""
+        mode = self.calc_mode_var.get()
+        if mode == "K-Path":
+            self.kpath_frame.pack(fill="x", pady=(0,10), before=self.sed_spacer_frame)
+            self.kgrid_frame.pack_forget()
+            self.chirality_frame.pack(fill="x", pady=(0,10), before=self.sed_spacer_frame)
+        else:  # K-Grid
+            self.kpath_frame.pack_forget()
+            self.kgrid_frame.pack(fill="x", pady=(0,10), before=self.sed_spacer_frame)
+            self.chirality_frame.pack_forget()
+            self._update_kgrid_axis_controls()
+        # Update visualization controls if SED is already calculated
+        if hasattr(self, 'sed_result') and self.sed_result:
+            self._update_viz_controls_state()
+
+    def _generate_plot(self):
+        """Generate plot based on calculation type"""
+        if not hasattr(self, 'sed_calculation_type'):
+            messagebox.showerror("Error", "Please calculate SED first")
+            return
+            
+        if self.sed_calculation_type == "K-Path":
+            # Setup dispersion plot
+            self._setup_dispersion_plot()
+            self._generate_sed_plot()
+        else:  # K-Grid
+            # Setup heatmap plot (this handles slider setup with proper frequency values)
+            self._setup_heatmap_plot()
+            if hasattr(self, 'kgrid_freqs') and len(self.kgrid_freqs) > 0:
+                # Plot the first frequency
+                self._plot_kgrid_heatmap(0)
+            else:
+                messagebox.showerror("Error", "No positive frequencies found in k-grid data")
+
+    def _calculate_kgrid_sed(self):
+        """Calculate K-Grid SED"""
+        def calc_worker():
+            try:
+                self.root.after(0, lambda: self.sed_status_var.set("Calculating K-Grid SED..."))
+                
+                plane = self.kgrid_plane_var.get()
+                n_kx = self.kgrid_n_kx_var.get()
+                n_ky = self.kgrid_n_ky_var.get()
+                kx_min = self.kgrid_kx_min_var.get()
+                kx_max = self.kgrid_kx_max_var.get()
+                ky_min = self.kgrid_ky_min_var.get()
+                ky_max = self.kgrid_ky_max_var.get()
+                kz_val = self.kgrid_kz_val_var.get()
+                
+                # Get k-grid
+                if plane == "xy":
+                    k_range_x = (kx_min, kx_max)
+                    k_range_y = (ky_min, ky_max)
+                    k_fixed_val = kz_val
+                elif plane == "yz":
+                    # For yz plane: x-axis is ky, y-axis is kz, fixed is kx
+                    # Widget mapping: ky_min/max->ky range, kz_fixed/kx_min->kz range, kx_max->kx fixed
+                    k_range_x = (ky_min, ky_max)  # ky range maps to x-axis of the plane
+                    k_range_y = (kz_val, kx_min)  # kz range (kz_fixed to kx_min) maps to y-axis 
+                    k_fixed_val = kx_max  # kx value (stored in kx_max entry)
+                elif plane == "zx":
+                    # For zx plane: x-axis is kz, y-axis is kx, fixed is ky  
+                    # Widget mapping: kz_fixed/kx_min->kz range, ky_min/max->kx range, kx_max->ky fixed
+                    k_range_x = (kz_val, kx_min)  # kz range (kz_fixed to kx_min) maps to x-axis
+                    k_range_y = (ky_min, ky_max)  # kx range (stored in ky_min/max) maps to y-axis
+                    k_fixed_val = kx_max  # ky value (stored in kx_max entry)
+                else:
+                    self.root.after(0, lambda: messagebox.showerror("Error", f"Invalid plane: {plane}"))
+                    return
+                    
+                k_mags, k_vecs, k_grid_shape = self.sed_calculator.get_k_grid(
+                    plane=plane,
+                    k_range_x=k_range_x,
+                    k_range_y=k_range_y,
+                    n_kx=n_kx,
+                    n_ky=n_ky,
+                    k_fixed_val=k_fixed_val
+                )
+                
+                basis_types = None
+                if self.basis_types_var.get().strip():
+                    try:
+                        basis_types = [int(x.strip()) for x in self.basis_types_var.get().split(',')]
+                    except ValueError:
+                        pass
+                
+                sed_obj = self.sed_calculator.calculate(
+                    k_points_mags=k_mags,
+                    k_vectors_3d=k_vecs,
+                    k_grid_shape=k_grid_shape,
+                    basis_atom_types=basis_types,
+                    summation_mode=self.summation_mode_var.get()
+                )
+                
+                # Store the SED result for the plotting
+                self.sed_result = SED(
+                    sed=sed_obj.sed,
+                    freqs=sed_obj.freqs,
+                    k_points=sed_obj.k_points,
+                    k_vectors=sed_obj.k_vectors,
+                    k_grid_shape=sed_obj.k_grid_shape,
+                    phase=None,  # No chirality for k-grid
+                    is_complex=sed_obj.is_complex
+                )
+                
+                # Store k-grid specific data with max frequency filtering
+                self.kgrid_sed_result = sed_obj
+                all_freqs = sed_obj.freqs
+                pos_mask = all_freqs >= 0
+                kgrid_freqs_unfiltered = all_freqs[pos_mask]
+                kgrid_sed_data_unfiltered = sed_obj.sed[pos_mask] if sed_obj.sed is not None else None
+                
+                # Apply max frequency filter if specified
+                if self.max_freq_var.get().strip():
+                    try:
+                        max_freq_val = float(self.max_freq_var.get())
+                        max_freq_mask = kgrid_freqs_unfiltered <= max_freq_val
+                        self.kgrid_freqs = kgrid_freqs_unfiltered[max_freq_mask]
+                        self.kgrid_sed_data = kgrid_sed_data_unfiltered[max_freq_mask] if kgrid_sed_data_unfiltered is not None else None
+                    except ValueError:
+                        # If max frequency is invalid, use all positive frequencies
+                        self.kgrid_freqs = kgrid_freqs_unfiltered
+                        self.kgrid_sed_data = kgrid_sed_data_unfiltered
+                else:
+                    # No max frequency specified, use all positive frequencies
+                    self.kgrid_freqs = kgrid_freqs_unfiltered
+                    self.kgrid_sed_data = kgrid_sed_data_unfiltered
+                
+                # Cache kx/ky axes for plotting
+                k_vectors = sed_obj.k_vectors
+                if plane == "xy":
+                    self.kgrid_kx = np.unique(k_vectors[:,0])
+                    self.kgrid_ky = np.unique(k_vectors[:,1])
+                    self.kgrid_xlabel = r'$k_x$ ($2\pi/\AA$)'
+                    self.kgrid_ylabel = r'$k_y$ ($2\pi/\AA$)'
+                elif plane == "yz":
+                    self.kgrid_kx = np.unique(k_vectors[:,1])
+                    self.kgrid_ky = np.unique(k_vectors[:,2])
+                    self.kgrid_xlabel = r'$k_y$ ($2\pi/\AA$)'
+                    self.kgrid_ylabel = r'$k_z$ ($2\pi/\AA$)'
+                elif plane == "zx":
+                    self.kgrid_kx = np.unique(k_vectors[:,2])
+                    self.kgrid_ky = np.unique(k_vectors[:,0])
+                    self.kgrid_xlabel = r'$k_z$ ($2\pi/\AA$)'
+                    self.kgrid_ylabel = r'$k_x$ ($2\pi/\AA$)'
+                
+                # Store calculation type
+                self.sed_calculation_type = "K-Grid"
+                
+                self.root.after(0, lambda: self.sed_status_var.set("K-Grid SED calculation complete"))
+                self.root.after(0, lambda: self.plot_button.config(state="normal"))
+                self.root.after(0, self._update_viz_controls_state)
+                
+            except Exception as e:
+                logger.error(f"Error calculating K-Grid SED: {e}")
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to generate k-grid SED:\n{e}"))
+                self.root.after(0, lambda: self.sed_status_var.set("Error calculating K-Grid SED"))
+        
+        thread = threading.Thread(target=calc_worker)
+        thread.daemon = True
+        thread.start()
+
+    def _setup_dispersion_plot(self):
+        """Setup the dispersion plot in the SED analysis tab"""
+        # Switch to Reciprocal Space tab
+        self.plot_notebook.select(0)
+        
+        # Hide frequency slider if it exists (used for k-grid plots)
+        if hasattr(self, 'freq_slider_frame'):
+            self.freq_slider_frame.pack_forget()
+
+    def _setup_heatmap_plot(self):
+        """Setup the k-grid heatmap plot in the SED analysis tab"""
+        # Switch to Reciprocal Space tab
+        self.plot_notebook.select(0)
+        
+        # Apply max frequency filtering to existing k-grid data
+        if hasattr(self, 'kgrid_sed_result') and self.kgrid_sed_result:
+            all_freqs = self.kgrid_sed_result.freqs
+            pos_mask = all_freqs >= 0
+            kgrid_freqs_unfiltered = all_freqs[pos_mask]
+            kgrid_sed_data_unfiltered = self.kgrid_sed_result.sed[pos_mask] if self.kgrid_sed_result.sed is not None else None
+            
+            # Apply max frequency filter based on current Plot Parameters setting
+            if self.max_freq_var.get().strip():
+                try:
+                    max_freq_val = float(self.max_freq_var.get())
+                    max_freq_mask = kgrid_freqs_unfiltered <= max_freq_val
+                    self.kgrid_freqs = kgrid_freqs_unfiltered[max_freq_mask]
+                    self.kgrid_sed_data = kgrid_sed_data_unfiltered[max_freq_mask] if kgrid_sed_data_unfiltered is not None else None
+                except ValueError:
+                    # If max frequency is invalid, use all positive frequencies
+                    self.kgrid_freqs = kgrid_freqs_unfiltered
+                    self.kgrid_sed_data = kgrid_sed_data_unfiltered
+            else:
+                # No max frequency specified, use all positive frequencies
+                self.kgrid_freqs = kgrid_freqs_unfiltered
+                self.kgrid_sed_data = kgrid_sed_data_unfiltered
+            
+            # Clear cached global scaling when frequency range changes
+            if hasattr(self, '_cached_global_vmin'):
+                delattr(self, '_cached_global_vmin')
+            if hasattr(self, '_cached_global_vmax'):
+                delattr(self, '_cached_global_vmax')
+            if hasattr(self, '_cached_scale_type'):
+                delattr(self, '_cached_scale_type')
+        
+        # Enable frequency slider if k-grid data exists
+        if hasattr(self, 'kgrid_freqs') and len(self.kgrid_freqs) > 0:
+            # Create a frame for the frequency slider in the SED plot area if it doesn't exist
+            if not hasattr(self, 'freq_slider_frame'):
+                self.freq_slider_frame = ttk.Frame(self.sed_plot_frame)
+                self.freq_slider_frame.pack(fill="x", side="top", before=self.sed_canvas.get_tk_widget())
+                
+                # Use actual frequency values instead of indices
+                min_freq = float(self.kgrid_freqs.min())
+                max_freq = float(self.kgrid_freqs.max())
+                
+                # Calculate proper frequency resolution for slider
+                if len(self.kgrid_freqs) > 1:
+                    # Use the median frequency difference for more robust estimation
+                    freq_diffs = np.diff(self.kgrid_freqs)
+                    freq_step = float(np.median(freq_diffs))
+                    # Round to a reasonable number of significant figures
+                    freq_step = round(freq_step, 6)
+                else:
+                    freq_step = 1.0
+                
+                self.kgrid_freq_slider = tk.Scale(self.freq_slider_frame, from_=min_freq, to=max_freq, 
+                                                 orient="horizontal", resolution=freq_step, label="Frequency (THz)", 
+                                                 command=self._on_kgrid_freq_slider, digits=4)
+                self.kgrid_freq_slider.pack(fill="x", padx=10, pady=5)
+                
+                # No separate label needed since Scale shows the value
+            else:
+                # Update existing slider range based on (possibly filtered) frequencies
+                min_freq = float(self.kgrid_freqs.min())
+                max_freq = float(self.kgrid_freqs.max())
+                
+                # Calculate proper frequency resolution for slider
+                if len(self.kgrid_freqs) > 1:
+                    # Use the median frequency difference for more robust estimation
+                    freq_diffs = np.diff(self.kgrid_freqs)
+                    freq_step = float(np.median(freq_diffs))
+                    # Round to a reasonable number of significant figures
+                    freq_step = round(freq_step, 6)
+                else:
+                    freq_step = 1.0
+                
+                self.kgrid_freq_slider.config(from_=min_freq, to=max_freq, resolution=freq_step, state="normal")
+            
+            # Set initial frequency and show slider
+            self.kgrid_freq_slider.set(float(self.kgrid_freqs[0]))
+            self.freq_slider_frame.pack(fill="x", side="top", before=self.sed_canvas.get_tk_widget())
+            
+        else:
+            if hasattr(self, 'freq_slider_frame'):
+                self.freq_slider_frame.pack_forget()
+
+    def _on_kgrid_freq_slider(self, val):
+        """Handle frequency slider change for k-grid heatmap"""
+        if hasattr(self, 'kgrid_freqs') and self.kgrid_freqs is not None:
+            freq_val = float(val)
+            # Find the closest frequency index
+            freq_idx = np.argmin(np.abs(self.kgrid_freqs - freq_val))
+            
+            # Plot the heatmap for this frequency
+            self._plot_kgrid_heatmap(freq_idx)
+
+    def _plot_kgrid_heatmap(self, freq_idx):
+        """Plot k-grid heatmap at given frequency index in the unified SED plot area"""
+        if not hasattr(self, 'sed_ax') or not hasattr(self, 'kgrid_sed_result'):
+            return
+            
+        self.sed_ax.clear()
+        # Remove previous colorbar and its axes if they exist
+        try:
+            if hasattr(self, 'sed_colorbar') and self.sed_colorbar:
+                self.sed_colorbar.remove()
+                self.sed_colorbar = None
+            if hasattr(self, 'sed_colorbar_ax') and self.sed_colorbar_ax:
+                if self.sed_colorbar_ax.get_figure() == self.sed_fig:
+                    self.sed_colorbar_ax.remove()
+                self.sed_colorbar_ax = None
+        except Exception:
+            pass
+            
+        if not self.kgrid_sed_result or self.kgrid_freqs is None or self.kgrid_sed_data is None:
+            self.sed_ax.set_title("No k-grid data")
+            self.sed_canvas.draw()
+            return
+            
+        try:
+            # Get intensity at this frequency
+            sed = self.kgrid_sed_result
+            freq_val = self.kgrid_freqs[int(freq_idx)]
+            if sed.is_complex:
+                intensity = np.sum(np.abs(self.kgrid_sed_data[int(freq_idx), :, :])**2, axis=-1)
+            else:
+                if self.kgrid_sed_data.ndim == 3:
+                    intensity = np.sum(self.kgrid_sed_data[int(freq_idx), :, :], axis=-1)
+                elif self.kgrid_sed_data.ndim == 2:
+                    intensity = self.kgrid_sed_data[int(freq_idx), :]
+                else:
+                    self.sed_ax.set_title("Unsupported SED shape")
+                    self.sed_canvas.draw()
+                    return
+                    
+            # Apply intensity scaling
+            scale_type = self.intensity_scale_var.get()
+            if scale_type == "log":
+                intensity = np.log10(np.maximum(intensity, 1e-12))
+            elif scale_type == "sqrt":
+                intensity = np.sqrt(np.maximum(intensity, 0))
+            elif scale_type == "dsqrt":
+                intensity = np.sqrt(np.sqrt(np.maximum(intensity, 0)))
+            # else linear: do nothing
+            
+            n_kx = len(self.kgrid_kx)
+            n_ky = len(self.kgrid_ky)
+            intensity_grid = intensity.reshape(n_kx, n_ky).T # Transpose for correct orientation
+            X, Y = np.meshgrid(self.kgrid_kx, self.kgrid_ky)
+            # Global scaling with caching for performance
+            vmin = vmax = None
+            if getattr(self, 'kgrid_global_scale_var', None) and self.kgrid_global_scale_var.get():
+                # Check if we have cached values for the current scale type
+                current_scale_type = self.intensity_scale_var.get()
+                if (hasattr(self, '_cached_global_vmin') and hasattr(self, '_cached_global_vmax') and 
+                    hasattr(self, '_cached_scale_type') and self._cached_scale_type == current_scale_type):
+                    # Use cached values
+                    vmin = self._cached_global_vmin
+                    vmax = self._cached_global_vmax
+                else:
+                    # Compute and cache global min/max across all freq slices
+                    if sed.is_complex:
+                        all_intensity = np.sum(np.abs(self.kgrid_sed_data)**2, axis=-1)
+                    else:
+                        if self.kgrid_sed_data.ndim == 3:
+                            all_intensity = np.sum(self.kgrid_sed_data, axis=-1)
+                        elif self.kgrid_sed_data.ndim == 2:
+                            all_intensity = self.kgrid_sed_data
+                        else:
+                            all_intensity = None
+                    
+                    if all_intensity is not None:
+                        # Apply scaling to all_intensity
+                        if current_scale_type == "log":
+                            all_intensity = np.log10(np.maximum(all_intensity, 1e-12))
+                        elif current_scale_type == "sqrt":
+                            all_intensity = np.sqrt(np.maximum(all_intensity, 0))
+                        elif current_scale_type == "dsqrt":
+                            all_intensity = np.sqrt(np.sqrt(np.maximum(all_intensity, 0)))
+                        
+                        # Cache the results
+                        self._cached_global_vmin = vmin = np.nanmin(all_intensity)
+                        self._cached_global_vmax = vmax = np.nanmax(all_intensity)
+                        self._cached_scale_type = current_scale_type
+            
+            pcm = self.sed_ax.pcolormesh(X, Y, intensity_grid, cmap=self.colormap_var.get(), shading='auto', vmin=vmin, vmax=vmax)
+            self.sed_ax.set_xlabel(self.kgrid_xlabel)
+            self.sed_ax.set_ylabel(self.kgrid_ylabel)
+            self.sed_ax.set_title(f"SED @ {freq_val:.2f} THz")
+            
+            # Add colorbar using make_axes_locatable
+            divider = make_axes_locatable(self.sed_ax)
+            self.sed_colorbar_ax = divider.append_axes("right", size="5%", pad=0.1)
+            self.sed_colorbar_ax.clear()
+            self.sed_colorbar = self.sed_fig.colorbar(pcm, cax=self.sed_colorbar_ax)
+            self.sed_colorbar.set_label("Intensity", fontsize=12)
+            
+            self.sed_canvas.draw()
+            
+        except Exception as e:
+            self.sed_ax.set_title(f"Plot error: {e}")
+            self.sed_canvas.draw()
+
+    def _on_max_freq_change(self):
+        """Handle change in max frequency entry"""
+        # Only update if we're in k-grid mode and have calculated k-grid data
+        if (hasattr(self, 'sed_calculation_type') and self.sed_calculation_type == "K-Grid" and 
+            hasattr(self, 'kgrid_sed_result') and self.kgrid_sed_result):
+            # Re-setup the heatmap plot with new frequency filtering
+            self._setup_heatmap_plot()
+            # Plot the first frequency if we have data
+            if hasattr(self, 'kgrid_freqs') and len(self.kgrid_freqs) > 0:
+                self._plot_kgrid_heatmap(0)
 
 
 def main():
