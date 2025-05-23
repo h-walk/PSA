@@ -238,9 +238,13 @@ class PSAMainWindow:
         ToolTip(nk_entry, text="Number of k-points along the specified k-path (integer > 0).")
         
         # BZ coverage
-        ttk.Label(self.kpath_frame, text="Brillouin Zone Coverage:").pack(anchor="w")
+        ttk.Label(self.kpath_frame, text="Reciprocal Space Coverage:").pack(anchor="w")
         self.bz_coverage_var = tk.DoubleVar(value=4.0)
-        ttk.Entry(self.kpath_frame, textvariable=self.bz_coverage_var).pack(fill="x", pady=(0,10))
+        bz_coverage_entry = ttk.Entry(self.kpath_frame, textvariable=self.bz_coverage_var)
+        bz_coverage_entry.pack(fill="x", pady=(0,10))
+        ToolTip(bz_coverage_entry, text="Coverage factor for reciprocal space extent in the k-direction.\n"
+                                        "Uses directional projection onto reciprocal lattice vectors.\n"
+                                        "1.0 = Γ to BZ boundary, 4.0 = 4× BZ boundary (typical).")
         
         # K-Grid Parameters Frame
         self.kgrid_frame = ttk.LabelFrame(sed_frame, text="K-Grid Parameters")

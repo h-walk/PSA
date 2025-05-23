@@ -89,14 +89,35 @@ class SEDCalculator:
         k_dir_unit = parse_direction(direction_spec)
 
         if lat_param is None or lat_param <= 1e-6:
-            norm_a1 = np.linalg.norm(self.a1)
-            if norm_a1 > 1e-6: 
-                lat_param = norm_a1
-                logger.info(f"Using |a1| ({lat_param:.3f} Å) as k-path lattice parameter.")
-            else: 
-                raise ValueError("Invalid/small lattice_param for k-path & |a1| too small for fallback.")
+            # Calculate the projection of the k-direction onto the reciprocal lattice vectors
+            # This gives the true reciprocal lattice extent in the specified direction
+            b_proj_x = np.dot(k_dir_unit, self.b1)
+            b_proj_y = np.dot(k_dir_unit, self.b2) 
+            b_proj_z = np.dot(k_dir_unit, self.b3)
+            
+            # Find the largest projection magnitude to determine the BZ boundary
+            projections = [abs(b_proj_x), abs(b_proj_y), abs(b_proj_z)]
+            max_projection = max(projections)
+            
+            if max_projection > 1e-6:
+                # Use the reciprocal projection as the characteristic k-extent
+                recip_extent = max_projection
+                logger.info(f"Using directional reciprocal lattice projection ({recip_extent:.3f} 2π/Å) for k-path.")
+                logger.info(f"  Direction projections: b1·k̂={b_proj_x:.3f}, b2·k̂={b_proj_y:.3f}, b3·k̂={b_proj_z:.3f}")
+            else:
+                # Fallback to |a1| if reciprocal projections are too small
+                norm_a1 = np.linalg.norm(self.a1)
+                if norm_a1 > 1e-6: 
+                    recip_extent = 2*np.pi / norm_a1
+                    logger.warning(f"Reciprocal projections too small, using |a1| fallback ({norm_a1:.3f} Å → {recip_extent:.3f} 2π/Å).")
+                else: 
+                    raise ValueError("Invalid/small lattice_param for k-path & reciprocal projections too small for auto-detection.")
+        else:
+            # Use provided lattice parameter (convert to reciprocal space)
+            recip_extent = 2*np.pi / lat_param
+            logger.info(f"Using provided lattice parameter ({lat_param:.3f} Å → {recip_extent:.3f} 2π/Å) for k-path.")
         
-        k_max_val = bz_coverage * (2*np.pi / lat_param)
+        k_max_val = bz_coverage * recip_extent
         if n_k < 1: 
             raise ValueError("n_k (k-points) must be >= 1.")
         k_mags = np.linspace(0, k_max_val, n_k, dtype=np.float32) if n_k > 1 else np.array([0.0 if np.isclose(k_max_val,0) else k_max_val], dtype=np.float32)
