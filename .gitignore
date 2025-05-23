@@ -6,3 +6,4 @@ sd_*
 .env
 *.png
 __pycache__/
+*.pyc
