@@ -23,7 +23,6 @@ PSA provides cutting-edge tools for analyzing vibrational properties of material
 - **Professional Visualization**: Publication-ready plots with customizable colormaps and scaling
 
 ### **🔬 Advanced Features**
-- **Directional Projection**: Proper reciprocal lattice vector projection for physically meaningful k-paths
 - **Performance Optimization**: Threaded calculations, cached scaling, efficient memory usage
 - **Multiple File Formats**: Support for LAMMPS, XYZ, and auto-detection via OVITO
 - **Modular Architecture**: Use as standalone package or integrate into existing workflows
@@ -58,10 +57,6 @@ psa-gui
 - ovito (Python bindings for trajectory loading)
 - pytest (for testing)
 
-### Verified Compatibility
-- **Operating Systems**: Linux, macOS, Windows
-- **Python Versions**: 3.8, 3.9, 3.10, 3.11+
-- **MD Packages**: LAMMPS, XYZ format, OVITO-supported formats
 
 ## 🎮 **GUI Usage**
 
@@ -248,10 +243,7 @@ pytest tests/test_visualization.py    # Plotting features
 
 ### **Version 2.0 Features**
 - **🎮 Interactive GUI**: Modern interface with click-to-select functionality
-- **🔧 Directional Projection**: Proper reciprocal lattice vector calculations
 - **⚡ Performance**: 5-10× faster calculations with optimized algorithms
-- **🎨 Enhanced Visualization**: Professional plots with dynamic colormaps
-- **🧮 Advanced Chirality**: Multi-axis chirality with phase analysis
 - **📊 K-Grid Analysis**: Real-time frequency heatmaps with sliders
 
 ### **Interface Improvements**
