@@ -1,0 +1,76 @@
+general:
+  trajectory_file_format: 'lammps' # 'auto', 'lammps', 'vasp_outcar'
+  use_velocities: True
+  save_npy_trajectory: True
+  save_npy_sed_data: True
+  chiral_mode_enabled: False    # Set to True for chiral SED analysis
+
+md_system:
+  dt: 0.02                     # Timestep in ps
+  nx: 50                        # Number of unit cells in x (for defining primitive vectors a1, a2, a3)
+  ny: 50                        # Number of unit cells in y
+  nz: 5                         # Number of unit cells in z
+  lattice_parameter: null      # Angstroms. If null, norm(a1) is used.
+
+sed_calculation:
+  directions: 
+    - [1,0,0]                   # Example: Gamma-X direction
+    # - 'y'                       # Example: Gamma-Y direction (parsed as [0,1,0])
+    # - 45.0                      # Example: Direction at 45 degrees in XY plane
+    # - {h: 1, k: 1, l: 0}      # Example: Miller indices for direction
+  n_kpoints: 250
+  bz_coverage: 4.0
+  polarization_indices_chiral: [0, 1] # Used if general.chiral_mode_enabled is True
+  
+  # Basis selection for MAIN SED calculations:
+  # Specify EITHER atom_indices OR atom_types, or leave both null for all atoms.
+  # If both are specified, atom_indices takes precedence.
+  basis:
+    atom_indices: null            # e.g., [0, 1, 2, 3] to select first 4 atoms
+    atom_types: null             # e.g., [1] to select all atoms of type 1
+                                  # If you want to analyze only type 1 atoms: atom_types: [1]
+
+plotting:
+  max_freq_2d: 20.0               # THz, for y-axis limit of 2D plots (intensity and phase)
+  
+  # Highlighting for 2D intensity plots (main SED)
+  highlight_2d_intensity:
+    k_min: null                   # e.g., 0.5
+    k_max: null                   # e.g., 1.0
+    w_min: null                   # e.g., 10.0
+    w_max: null                   # e.g., 15.0
+    
+  enable_3d_dispersion_plot: False # Set to True to generate 3D dispersion plots
+  
+  3d_plot_settings:
+    intensity_log_scale: True       # Apply log10 to intensity values for 3D intensity plot
+    intensity_threshold_rel: 0.05   # Relative threshold for gathering data points for 3D intensity plot
+
+ised: # Inverse SED Reconstruction Parameters
+  apply: False                     # Set to True to perform iSED reconstruction
+  
+  k_path:
+    direction: 'x'                  # Direction for the k-path used in iSED's internal SED calculation
+                                    # Can be 'x', 'y', 'z', [h,k,l], angle, etc.
+    characteristic_length: null     # Angstroms. If null, uses md_system.lattice_parameter.
+    n_points: 250                   # Number of k-points for iSED's internal SED calculation
+    bz_coverage: 4.0                # BZ coverage for iSED's internal SED. 
+                                    # If null, uses sed_calculation.bz_coverage.
+  
+  target_point:
+    k_value: 1.7                    # Target k-point value in 2pi/Angstrom units for reconstruction
+    w_value_thz: 35.5               # Target frequency value in THz for reconstruction
+
+  # Basis selection for iSED reconstruction:
+  # Determines which atoms' displacements/velocities are used to calculate the iSED input SED,
+  # and which atoms' motion is reconstructed.
+  # Specify EITHER atom_indices OR atom_types, or leave both null for all atoms.
+  # If both are specified, atom_indices takes precedence.
+  basis:
+    atom_indices: null              # e.g., [10, 11] for iSED specific basis
+    atom_types: [1,2]                 # e.g., [1] to reconstruct motion of type 1 atoms
+  
+  reconstruction:
+    rescaling_factor: 'auto'        # 'auto' or a numerical factor (e.g., 10.0)
+    num_animation_timesteps: 100    # Number of frames in the output LAMMPS dump file
+    output_dump_filename: 'ised_motion.dump' # Name of the output LAMMPS dump file
