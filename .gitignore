@@ -5,3 +5,4 @@ sd_*
 *.npz
 .env
 *.png
+__pycache__/

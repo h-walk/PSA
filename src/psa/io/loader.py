@@ -6,15 +6,22 @@ from pathlib import Path
 import logging
 from typing import Optional
 from tqdm import tqdm
+import threading
+import subprocess
+import sys
+import tempfile
+import pickle
 
 from ..core.trajectory import Trajectory
 
+# Try to import OVITO, but don't fail if it's not available
 try:
     from ovito.io import import_file
     from ovito.modifiers import UnwrapTrajectoriesModifier
+    OVITO_AVAILABLE = True
 except ImportError as e:
     logging.error(f"OVITO import failed: {e}")
-    raise
+    OVITO_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +79,11 @@ class TrajectoryLoader:
         return self._load_via_ovito()
 
     def _load_via_ovito(self) -> Trajectory:
+        # Check if we're running on the main thread (important for macOS compatibility)
+        if threading.current_thread() != threading.main_thread():
+            logger.warning("OVITO loading called from background thread. This may cause issues on macOS.")
+            logger.warning("Consider running trajectory loading on the main thread to avoid segmentation faults.")
+        
         logger.info(f"Loading/unwrapping '{self.filepath.name}' with OVITO.")
         ovito_fmt = None
         detected_fmt = self._detect_file_format()
@@ -82,7 +94,55 @@ class TrajectoryLoader:
         
         logger.debug(f"OVITO load format: {ovito_fmt or 'auto-detected'}")
 
-        pipeline = import_file(str(self.filepath), input_format=ovito_fmt)
+        # Check if we're likely running in a GUI context (tkinter imported)
+        gui_context = 'tkinter' in sys.modules or 'Tkinter' in sys.modules
+        
+        if gui_context:
+            # Use subprocess approach to avoid GUI framework conflicts on macOS
+            logger.info("GUI context detected - using subprocess OVITO loading to avoid framework conflicts...")
+            try:
+                return self._load_via_subprocess(ovito_fmt)
+            except Exception as e:
+                logger.error(f"Subprocess OVITO loading failed: {e}")
+                # Fallback to direct OVITO loading (may cause issues on macOS)
+                logger.warning("Falling back to direct OVITO loading (may cause segfaults on macOS in GUI context)")
+                return self._load_via_ovito_direct(ovito_fmt)
+        else:
+            # Command line context - use direct OVITO loading (usually safe)
+            logger.info("Command line context detected - using direct OVITO loading...")
+            return self._load_via_ovito_direct(ovito_fmt)
+
+    def _load_via_subprocess(self, ovito_fmt: Optional[str]) -> Trajectory:
+        """Load trajectory via OVITO in a subprocess to avoid GUI conflicts"""
+        logger.info("Using subprocess OVITO loading to avoid GUI framework conflicts")
+        
+        # Create a temporary file for data transfer
+        with tempfile.NamedTemporaryFile(suffix='.pkl', delete=False) as temp_file:
+            temp_path = temp_file.name
+        
+        try:
+            # Get the current working directory and PSA package path
+            current_dir = Path.cwd()
+            psa_root = Path(__file__).parent.parent.parent
+            
+            # Create the subprocess command
+            script_code = f'''
+import sys
+import os
+sys.path.insert(0, r"{current_dir}")
+sys.path.insert(0, r"{psa_root}")
+os.chdir(r"{current_dir}")
+
+import numpy as np
+from pathlib import Path
+import pickle
+
+def subprocess_ovito_loader(filepath, ovito_fmt, dt, output_file):
+    try:
+        from ovito.io import import_file
+        from ovito.modifiers import UnwrapTrajectoriesModifier
+        
+        pipeline = import_file(filepath, input_format=ovito_fmt)
         pipeline.modifiers.append(UnwrapTrajectoriesModifier())
 
         n_frames = pipeline.source.num_frames
@@ -90,6 +150,146 @@ class TrajectoryLoader:
             raise ValueError("OVITO: 0 frames in trajectory.")
 
         frame0_data = pipeline.compute(0)
+        if not (frame0_data and hasattr(frame0_data, 'cell') and frame0_data.cell):
+            raise ValueError("OVITO: Could not read cell data from frame 0.")
+        if not (hasattr(frame0_data, 'particles') and frame0_data.particles):
+            raise ValueError("OVITO: Could not read particle data from frame 0.")
+        
+        n_atoms = len(frame0_data.particles.positions) if hasattr(frame0_data.particles, 'positions') and frame0_data.particles.positions is not None else 0
+        if n_atoms == 0:
+            raise ValueError("OVITO: 0 atoms in frame 0.")
+
+        has_vel = hasattr(frame0_data.particles, 'velocities') and frame0_data.particles.velocities is not None
+
+        pos_all = np.zeros((n_frames, n_atoms, 3), dtype=np.float32)
+        vel_all = np.zeros((n_frames, n_atoms, 3), dtype=np.float32)
+        
+        h_matrix = np.array(frame0_data.cell.matrix, dtype=np.float32)[:3,:3]
+        
+        for i in range(n_frames):
+            frame_data = pipeline.compute(i)
+            if not (frame_data and hasattr(frame_data, 'particles') and frame_data.particles):
+                continue
+            
+            if hasattr(frame_data.particles, 'positions') and frame_data.particles.positions is not None:
+                frame_pos = np.array(frame_data.particles.positions, dtype=np.float32)
+                if frame_pos.shape == (n_atoms, 3): 
+                    pos_all[i] = frame_pos
+
+            if has_vel and hasattr(frame_data.particles, 'velocities') and frame_data.particles.velocities is not None:
+                frame_vel = np.array(frame_data.particles.velocities, dtype=np.float32)
+                if frame_vel.shape == (n_atoms, 3): 
+                    vel_all[i] = frame_vel
+
+        types_data = frame0_data.particles.particle_types if hasattr(frame0_data.particles, 'particle_types') and frame0_data.particles.particle_types is not None else None
+        if types_data is not None and len(types_data) == n_atoms:
+            atom_types_arr = np.array(types_data, dtype=np.int32)
+        else:
+            atom_types_arr = np.ones(n_atoms, dtype=np.int32)
+            
+        ts_arr = np.arange(n_frames, dtype=np.float32) * dt
+        
+        trajectory_data = {{
+            'positions': pos_all,
+            'velocities': vel_all,
+            'types': atom_types_arr,
+            'timesteps': ts_arr,
+            'box_matrix': h_matrix,
+            'n_frames': n_frames,
+            'n_atoms': n_atoms,
+            'dt': dt
+        }}
+        
+        with open(output_file, 'wb') as f:
+            pickle.dump(trajectory_data, f)
+            
+        return 0
+        
+    except Exception as e:
+        print(f"Error in subprocess OVITO loader: {{e}}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+exit_code = subprocess_ovito_loader(r"{self.filepath}", "{ovito_fmt}", {self.dt}, r"{temp_path}")
+sys.exit(exit_code)
+'''
+            
+            # Run OVITO loading in subprocess
+            process = subprocess.run([
+                sys.executable, '-c', script_code
+            ], capture_output=True, text=True, timeout=300)  # 5 minute timeout
+            
+            if process.returncode != 0:
+                raise RuntimeError(f"OVITO subprocess failed with return code {process.returncode}.\nStdout: {process.stdout}\nStderr: {process.stderr}")
+            
+            # Read the trajectory data from the temporary file
+            if not Path(temp_path).exists():
+                raise RuntimeError(f"Subprocess did not create output file: {temp_path}")
+                
+            with open(temp_path, 'rb') as f:
+                trajectory_data = pickle.load(f)
+            
+            # Create Trajectory object
+            box_len = np.array([trajectory_data['box_matrix'][0,0], 
+                               trajectory_data['box_matrix'][1,1], 
+                               trajectory_data['box_matrix'][2,2]], dtype=np.float32)
+            box_tilt = np.array([trajectory_data['box_matrix'][0,1], 
+                                trajectory_data['box_matrix'][0,2], 
+                                trajectory_data['box_matrix'][1,2]], dtype=np.float32)
+            
+            trajectory = Trajectory(
+                trajectory_data['positions'],
+                trajectory_data['velocities'],
+                trajectory_data['types'],
+                trajectory_data['timesteps'],
+                box_matrix=trajectory_data['box_matrix'],
+                box_lengths=box_len,
+                box_tilts=box_tilt,
+                dt_ps=trajectory_data['dt']
+            )
+            
+            logger.info(f"Trajectory '{self.filepath.name}' loaded via subprocess OVITO: {trajectory_data['n_frames']} frames, {trajectory_data['n_atoms']} atoms.")
+            
+            # Save the freshly loaded trajectory to .npy cache for next time
+            try:
+                self.save_trajectory_npy(trajectory)
+            except Exception as e:
+                logger.warning(f"Failed to save .npy cache for {self.filepath.name}: {e}")
+                
+            return trajectory
+            
+        finally:
+            # Clean up temporary file
+            try:
+                if Path(temp_path).exists():
+                    Path(temp_path).unlink()
+            except Exception as e:
+                logger.warning(f"Failed to clean up temporary file {temp_path}: {e}")
+
+    def _load_via_ovito_direct(self, ovito_fmt: Optional[str]) -> Trajectory:
+        """Direct OVITO loading (fallback method, may cause issues on macOS)"""
+        # Check if OVITO is available
+        if not OVITO_AVAILABLE:
+            raise ImportError("OVITO is not available. Please install OVITO Python to load trajectory files without .npy cache.")
+        
+        try:
+            pipeline = import_file(str(self.filepath), input_format=ovito_fmt)
+            pipeline.modifiers.append(UnwrapTrajectoriesModifier())
+        except Exception as e:
+            logger.error(f"OVITO failed to load file '{self.filepath.name}': {e}")
+            raise RuntimeError(f"OVITO import failed: {e}. This may be due to threading issues on macOS or file format problems.")
+
+        n_frames = pipeline.source.num_frames
+        if n_frames == 0:
+            raise ValueError("OVITO: 0 frames in trajectory.")
+
+        try:
+            frame0_data = pipeline.compute(0)
+        except Exception as e:
+            logger.error(f"OVITO failed to compute frame 0: {e}")
+            raise RuntimeError(f"OVITO compute failed: {e}. This may be due to threading issues on macOS.")
+            
         if not (frame0_data and hasattr(frame0_data, 'cell') and frame0_data.cell):
              raise ValueError("OVITO: Could not read cell data from frame 0.")
         if not (hasattr(frame0_data, 'particles') and frame0_data.particles):
@@ -111,7 +311,12 @@ class TrajectoryLoader:
         box_tilt = np.array([h_matrix[0,1], h_matrix[0,2], h_matrix[1,2]], dtype=np.float32)
         
         for i in tqdm(range(n_frames), desc=f"Loading OVITO frames from {self.filepath.name}", unit="fr"):
-            frame_data = pipeline.compute(i)
+            try:
+                frame_data = pipeline.compute(i)
+            except Exception as e:
+                logger.error(f"OVITO failed to compute frame {i}: {e}")
+                continue
+                
             if not (frame_data and hasattr(frame_data, 'particles') and frame_data.particles):
                 logger.error(f"OVITO: Could not compute frame {i}. Data will be zero.")
                 continue

@@ -88,6 +88,43 @@ class ToolTip:
         if tw:
             tw.destroy()
 
+class ProgressDialog:
+    """Simple progress dialog for trajectory loading"""
+    def __init__(self, parent, title="Loading..."):
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title(title)
+        self.dialog.geometry("400x150")
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+        
+        # Center the dialog
+        self.dialog.update_idletasks()
+        x = (self.dialog.winfo_screenwidth() // 2) - (400 // 2)
+        y = (self.dialog.winfo_screenheight() // 2) - (150 // 2)
+        self.dialog.geometry(f"400x150+{x}+{y}")
+        
+        # Create progress elements
+        self.label = ttk.Label(self.dialog, text="Initializing...", font=("Arial", 10))
+        self.label.pack(pady=20)
+        
+        self.progress = ttk.Progressbar(self.dialog, mode='indeterminate')
+        self.progress.pack(pady=10, padx=20, fill=tk.X)
+        self.progress.start()
+        
+        self.detail_label = ttk.Label(self.dialog, text="", font=("Arial", 8))
+        self.detail_label.pack(pady=5)
+        
+        self.dialog.protocol("WM_DELETE_WINDOW", lambda: None)  # Disable close button
+        
+    def update_message(self, message, detail=""):
+        self.label.configure(text=message)
+        self.detail_label.configure(text=detail)
+        self.dialog.update_idletasks()
+        
+    def close(self):
+        self.progress.stop()
+        self.dialog.destroy()
+
 class PSAMainWindow:
     def __init__(self, root):
         self.root = root
@@ -671,40 +708,63 @@ class PSAMainWindow:
             messagebox.showerror("Error", "Please select a trajectory file first")
             return
             
-        def load_worker():
-            try:
-                # Use thread-safe GUI updates
-                self.root.after(0, lambda: self.status_var.set("Loading trajectory..."))
-                
-                # Load trajectory
-                loader = TrajectoryLoader(
-                    filename=self.trajectory_file,
-                    dt=self.dt_var.get(),
-                    file_format=self.format_var.get()
-                )
-                trajectory = loader.load()
-                
-                # Initialize SED calculator
-                self.sed_calculator = SEDCalculator(
-                    traj=trajectory,
-                    nx=self.nx_var.get(),
-                    ny=self.ny_var.get(),
-                    nz=self.nz_var.get()
-                )
-                
-                # Thread-safe GUI updates
-                self.root.after(0, lambda: self.status_var.set(f"Trajectory loaded: {trajectory.n_frames} frames, {trajectory.n_atoms} atoms"))
-                self.root.after(0, lambda: self.calc_sed_button.config(state="normal"))
-                
-            except Exception as e:
-                logger.error(f"Error loading trajectory: {e}")
-                self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to load trajectory:\n{str(e)}"))
-                self.root.after(0, lambda: self.status_var.set("Error loading trajectory"))
-                
-        # Run in thread to prevent GUI freezing
-        thread = threading.Thread(target=load_worker)
-        thread.daemon = True
-        thread.start()
+        # Create progress dialog
+        progress = ProgressDialog(self.root, "Loading Trajectory")
+        progress.update_message("Checking for cached files...", f"File: {Path(self.trajectory_file).name}")
+        
+        try:
+            # Load trajectory on main thread to avoid OVITO threading issues
+            loader = TrajectoryLoader(
+                filename=self.trajectory_file,
+                dt=self.dt_var.get(),
+                file_format=self.format_var.get()
+            )
+            
+            # Check if we need OVITO loading
+            cache_stem = Path(self.trajectory_file).parent / Path(self.trajectory_file).stem
+            npy_files = {
+                'positions': cache_stem.with_suffix('.positions.npy'),
+                'velocities': cache_stem.with_suffix('.velocities.npy'),
+                'types': cache_stem.with_suffix('.types.npy'),
+                'box_matrix': cache_stem.with_suffix('.box_matrix.npy')
+            }
+            
+            if all(f.exists() for f in npy_files.values()):
+                progress.update_message("Loading from cached .npy files...", "This should be fast!")
+            else:
+                progress.update_message("Loading trajectory file...", 
+                                      "Processing with OVITO (first time may take a while).\nFuture loads will be much faster using cached files.")
+            
+            # Process the loading with periodic GUI updates
+            trajectory = loader.load()
+            
+            progress.update_message("Initializing SED calculator...", "Almost done...")
+            
+            # Initialize SED calculator
+            self.sed_calculator = SEDCalculator(
+                traj=trajectory,
+                nx=self.nx_var.get(),
+                ny=self.ny_var.get(),
+                nz=self.nz_var.get()
+            )
+            
+            # Update status
+            self.status_var.set(f"Trajectory loaded: {trajectory.n_frames} frames, {trajectory.n_atoms} atoms")
+            self.calc_sed_button.config(state="normal")
+            
+        except Exception as e:
+            logger.error(f"Error loading trajectory: {e}")
+            error_msg = str(e)
+            if "subprocess failed" in error_msg.lower() or "ovito" in error_msg.lower():
+                error_msg = f"Failed to load trajectory file.\n\nError: {str(e)}\n\nTip: Try running the basic_sed_analysis.py script first to check if OVITO works in your environment."
+            else:
+                error_msg = f"Failed to load trajectory:\n{str(e)}"
+            messagebox.showerror("Error", error_msg)
+            self.status_var.set("Error loading trajectory")
+        
+        finally:
+            # Close progress dialog
+            progress.close()
         
     def _calculate_sed(self):
         """Calculate SED dispersion or k-grid based on mode"""
