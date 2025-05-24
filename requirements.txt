@@ -1,2 +1,6 @@
 PyYAML
 NumPy 
+imageio
+pandas
+matplotlib
+Pillow 

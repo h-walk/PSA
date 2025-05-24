@@ -26,12 +26,23 @@ import os
 import traceback
 import ast
 from mpl_toolkits.axes_grid1 import make_axes_locatable # For better colorbar placement
+import imageio  # For GIF creation
+from datetime import datetime
+from io import BytesIO
+from PIL import Image
 
 # Add parent directories to path for imports
 current_dir = Path(__file__).parent
 sys.path.append(str(current_dir.parent.parent))
 
 from psa import TrajectoryLoader, SEDCalculator, SED, SEDPlotter
+
+# Try to import PIL for image handling, but make it optional
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -147,7 +158,51 @@ class PSAMainWindow:
         
         # Bind events
         self._setup_event_handlers()
+    
+    def _cleanup_colorbar(self):
+        """Helper method to clean up existing colorbar and its axes"""
+        try:
+            if hasattr(self, 'sed_colorbar') and self.sed_colorbar:
+                self.sed_colorbar.remove()
+                self.sed_colorbar = None
+            if hasattr(self, 'sed_colorbar_ax') and self.sed_colorbar_ax:
+                if self.sed_colorbar_ax.get_figure() == self.sed_fig:
+                    self.sed_colorbar_ax.remove()
+                self.sed_colorbar_ax = None
+        except Exception:
+            pass
+    
+    def _create_labeled_entry(self, parent, label_text, textvariable, pack_kwargs=None, entry_kwargs=None, label_kwargs=None):
+        """Helper method to create label + entry combinations"""
+        pack_kwargs = pack_kwargs or {}
+        entry_kwargs = entry_kwargs or {}
+        label_kwargs = label_kwargs or {}
         
+        label = ttk.Label(parent, text=label_text, **label_kwargs)
+        label.pack(anchor="w", **pack_kwargs)
+        
+        entry = ttk.Entry(parent, textvariable=textvariable, **entry_kwargs)
+        entry.pack(fill="x", pady=(0,5))
+        
+        return label, entry
+    
+    def _create_labeled_frame_with_entry(self, parent, label_text, textvariable, button_text=None, button_command=None):
+        """Helper method to create frame with label, entry, and optional button"""
+        ttk.Label(parent, text=label_text, font=("Arial", 10, "bold")).pack(anchor="w", pady=(10,5))
+        
+        frame = ttk.Frame(parent)
+        frame.pack(fill="x", pady=(0,10))
+        
+        entry = ttk.Entry(frame, textvariable=textvariable, state="readonly" if button_text else "normal")
+        entry.pack(side="left", fill="x", expand=True)
+        
+        if button_text and button_command:
+            button = ttk.Button(frame, text=button_text, command=button_command)
+            button.pack(side="right", padx=(5,0))
+            return frame, entry, button
+        
+        return frame, entry
+
     def _create_interface(self):
         """Create the main GUI interface"""
         # Create main paned window with visible separator
@@ -164,8 +219,9 @@ class PSAMainWindow:
         
     def _create_control_panel(self, parent):
         """Create the left control panel"""
-        control_frame = ttk.Frame(parent, width=400)
-        parent.add(control_frame)
+        control_frame = ttk.Frame(parent, width=450)
+        control_frame.pack_propagate(False)  # Maintain minimum width
+        parent.add(control_frame, minsize=400)  # Set minimum size for the pane
         
         # Create notebook for organized tabs
         notebook = ttk.Notebook(control_frame)
@@ -188,20 +244,12 @@ class PSAMainWindow:
     def _create_file_tab(self, notebook):
         """Create file input and basic parameters tab"""
         file_frame = ttk.Frame(notebook)
-        notebook.add(file_frame, text="Input File")
+        notebook.add(file_frame, text="I/O")
         
         # Trajectory file selection
-        ttk.Label(file_frame, text="Trajectory File:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(10,5))
-        
-        traj_frame = ttk.Frame(file_frame)
-        traj_frame.pack(fill="x", pady=(0,10))
-        
         self.trajectory_var = tk.StringVar()
-        trajectory_entry = ttk.Entry(traj_frame, textvariable=self.trajectory_var, state="readonly")
-        trajectory_entry.pack(side="left", fill="x", expand=True)
-        
-        ttk.Button(traj_frame, text="Browse...", 
-                  command=self._browse_trajectory).pack(side="right", padx=(5,0))
+        traj_frame, trajectory_entry, browse_button = self._create_labeled_frame_with_entry(
+            file_frame, "Trajectory File:", self.trajectory_var, "Browse...", self._browse_trajectory)
         
         # File format selection
         ttk.Label(file_frame, text="File Format:").pack(anchor="w", pady=(5,0))
@@ -214,9 +262,8 @@ class PSAMainWindow:
         ttk.Label(file_frame, text="MD Parameters:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(10,5))
         
         # Timestep
-        ttk.Label(file_frame, text="Timestep (ps):").pack(anchor="w")
         self.dt_var = tk.DoubleVar(value=0.005)
-        ttk.Entry(file_frame, textvariable=self.dt_var).pack(fill="x", pady=(0,5))
+        self._create_labeled_entry(file_frame, "Timestep (ps):", self.dt_var)
         
         # System dimensions
         dims_frame = ttk.Frame(file_frame)
@@ -224,15 +271,16 @@ class PSAMainWindow:
         ttk.Label(dims_frame, text="System Dimensions:").pack(anchor="w")
         dim_row = ttk.Frame(dims_frame)
         dim_row.pack(fill="x")
-        ttk.Label(dim_row, text="nx:").pack(side="left")
+        
+        # Create dimension entries in a more compact way
         self.nx_var = tk.IntVar(value=50)
-        ttk.Entry(dim_row, textvariable=self.nx_var, width=8).pack(side="left", padx=(2, 10))
-        ttk.Label(dim_row, text="ny:").pack(side="left")
         self.ny_var = tk.IntVar(value=50)
-        ttk.Entry(dim_row, textvariable=self.ny_var, width=8).pack(side="left", padx=(2, 10))
-        ttk.Label(dim_row, text="nz:").pack(side="left")
         self.nz_var = tk.IntVar(value=1)
-        ttk.Entry(dim_row, textvariable=self.nz_var, width=8).pack(side="left", padx=(2, 0))
+        dims = [("nx:", self.nx_var), ("ny:", self.ny_var), ("nz:", self.nz_var)]
+        
+        for label_text, var in dims:
+            ttk.Label(dim_row, text=label_text).pack(side="left")
+            ttk.Entry(dim_row, textvariable=var, width=8).pack(side="left", padx=(2, 10))
         
         # Load trajectory button
         self.load_button = ttk.Button(file_frame, text="Load Trajectory", 
@@ -243,10 +291,18 @@ class PSAMainWindow:
         self.status_var = tk.StringVar(value="No trajectory loaded")
         ttk.Label(file_frame, textvariable=self.status_var, foreground="blue").pack(anchor="w")
         
+        # Output directory selection
+        self.output_dir_var = tk.StringVar(value=str(Path.cwd() / "psa_results"))
+        output_dir_frame, self.output_dir_entry, output_browse_button = self._create_labeled_frame_with_entry(
+            file_frame, "Output Directory:", self.output_dir_var, "Browse...", self._browse_output_dir)
+        
+        ttk.Label(file_frame, text="All saved files will be stored in this directory", 
+                 font=("Arial", 8), foreground="gray").pack(anchor="w")
+        
     def _create_sed_tab(self, notebook):
         """Create SED calculation parameters tab (now includes k-grid)"""
         sed_frame = ttk.Frame(notebook, padding=(10, 10))
-        notebook.add(sed_frame, text="Calculation Parameters")
+        notebook.add(sed_frame, text="Calculation")
         
         # Calculation Mode Toggle
         ttk.Label(sed_frame, text="Calculation Mode:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(10,5))
@@ -353,14 +409,13 @@ class PSAMainWindow:
         summation_mode_combo.pack(fill="x", pady=(0,10))
         ToolTip(summation_mode_combo, text="Mode for summing atomic contributions to SED:\n- coherent: Sum complex amplitudes (default)\n- incoherent: Sum squared magnitudes")
         
-        # Chirality options (only for K-Path) - moved to be direct child of sed_frame
-        self.chirality_frame = ttk.LabelFrame(sed_frame, text="Chirality Options")
+        # Chirality options (available for both K-Path and K-Grid) - moved to common parameters
         self.chiral_sed_var = tk.BooleanVar(value=False)
-        chiral_check = ttk.Checkbutton(self.chirality_frame, text="Calculate Chirality", variable=self.chiral_sed_var, command=self._toggle_chiral_options)
+        chiral_check = ttk.Checkbutton(common_frame, text="Calculate Chirality", variable=self.chiral_sed_var, command=self._toggle_chiral_options)
         chiral_check.pack(anchor="w", pady=(5,0))
-        ToolTip(chiral_check, text="Enable to calculate chirality (requires coherent summation).")
+        ToolTip(chiral_check, text="Enable to calculate chirality (requires coherent summation for both K-Path and K-Grid).")
 
-        self.chiral_options_frame = ttk.Frame(self.chirality_frame)
+        self.chiral_options_frame = ttk.Frame(common_frame)
         ttk.Label(self.chiral_options_frame, text="Chiral Axis:").pack(anchor="w", pady=(5,0))
         self.chiral_axis_var = tk.StringVar(value="z")
         self.chiral_axis_combo = ttk.Combobox(self.chiral_options_frame, textvariable=self.chiral_axis_var,
@@ -390,19 +445,22 @@ class PSAMainWindow:
     def _create_viz_tab(self, notebook):
         """Create visualization parameters tab"""
         viz_frame = ttk.Frame(notebook)
-        notebook.add(viz_frame, text="Plot Parameters")
+        notebook.add(viz_frame, text="Plot")
+        
+        # Use the viz_frame directly as the parent for all plot options (no scrolling)
+        plot_content_frame = viz_frame
 
-        # Max frequency (shared for both K-Path and K-Grid) - FIRST
-        ttk.Label(viz_frame, text="Max Frequency (THz, empty for auto):").pack(anchor="w", pady=(10,0))
+        # Max frequency (shared for both K-Path and K-Grid)
+        ttk.Label(plot_content_frame, text="Max Frequency (THz, empty for auto):").pack(anchor="w", pady=(5,0))
         self.max_freq_var = tk.StringVar()
-        max_freq_entry = ttk.Entry(viz_frame, textvariable=self.max_freq_var)
-        max_freq_entry.pack(fill="x", pady=(0,10))
+        max_freq_entry = ttk.Entry(plot_content_frame, textvariable=self.max_freq_var)
+        max_freq_entry.pack(fill="x", pady=(0,5))
         max_freq_entry.bind('<Return>', lambda event: self._on_max_freq_change())
         max_freq_entry.bind('<FocusOut>', lambda event: self._on_max_freq_change())
         ToolTip(max_freq_entry, text="Maximum frequency (THz) to display on plots.\nLeave empty for automatic scaling based on data.")
 
-        # Plot Chiral toggle button (only shown when chiral data is available) - SECOND
-        self.plot_chiral_frame = ttk.Frame(viz_frame)
+        # Plot Chiral toggle button (only shown when chiral data is available) - BEFORE save options
+        self.plot_chiral_frame = ttk.Frame(plot_content_frame)
         # Don't pack initially - will be shown by _update_viz_controls_state when chiral data is available
         self.plot_chiral_var = tk.BooleanVar(value=False)
         self.plot_chiral_button = ttk.Checkbutton(self.plot_chiral_frame, text="Plot Chiral", 
@@ -411,19 +469,19 @@ class PSAMainWindow:
         self.plot_chiral_button.pack(anchor="w", pady=(0,10))
         ToolTip(self.plot_chiral_button, text="Toggle to display chirality instead of SED intensity.")
 
-        # Intensity scaling (shown for both modes) - THIRD
-        ttk.Label(viz_frame, text="Intensity Scaling:").pack(anchor="w")
+        # Intensity scaling (shown for both modes)
+        ttk.Label(plot_content_frame, text="Intensity Scaling:").pack(anchor="w")
         self.intensity_scale_var = tk.StringVar(value="dsqrt")
-        scale_combo = ttk.Combobox(viz_frame, textvariable=self.intensity_scale_var,
+        scale_combo = ttk.Combobox(plot_content_frame, textvariable=self.intensity_scale_var,
                                   values=["linear", "log", "sqrt", "dsqrt"], state="readonly")
         scale_combo.pack(fill="x", pady=(0,10))
         self.intensity_scale_combo = scale_combo
         self.intensity_scale_combo.bind("<<ComboboxSelected>>", lambda event: self._on_intensity_scale_change())
 
-        # Intensity Colormap (adapt based on mode) - FOURTH
-        ttk.Label(viz_frame, text="Intensity Colormap:").pack(anchor="w")
+        # Intensity Colormap (adapt based on mode)
+        ttk.Label(plot_content_frame, text="Intensity Colormap:").pack(anchor="w")
         self.colormap_var = tk.StringVar(value="inferno")
-        cmap_combo = ttk.Combobox(viz_frame, textvariable=self.colormap_var,
+        cmap_combo = ttk.Combobox(plot_content_frame, textvariable=self.colormap_var,
                                  values=["inferno", "viridis", "plasma", "magma", "hot", "jet"], 
                                  state="readonly")
         cmap_combo.pack(fill="x", pady=(0,10))
@@ -431,20 +489,20 @@ class PSAMainWindow:
         self.intensity_colormap_combo = cmap_combo
         self.intensity_colormap_combo.bind("<<ComboboxSelected>>", lambda event: self._on_intensity_colormap_change())
 
-        # Phase Colormap (only shown when chiral toggle is enabled) - FIFTH
-        self.phase_colormap_frame = ttk.Frame(viz_frame)
+        # Phase Colormap (only shown when chiral toggle is enabled)
+        self.phase_colormap_frame = ttk.Frame(plot_content_frame)
         # Don't pack initially - will be shown when chiral toggle is enabled
         ttk.Label(self.phase_colormap_frame, text="Phase Colormap:").pack(anchor="w")
-        self.phase_colormap_var = tk.StringVar(value="coolwarm")
-        diverging_cmaps = ['coolwarm', 'hsv', 'bwr', 'RdBu', 'RdGy', 'PiYG', 'seismic', 'twilight', 'twilight_shifted']
+        self.phase_colormap_var = tk.StringVar(value="bwr")
+        diverging_cmaps = ['bwr', 'coolwarm', 'hsv', 'RdBu', 'RdGy', 'PiYG', 'seismic', 'twilight', 'twilight_shifted']
         self.phase_colormap_combo = ttk.Combobox(self.phase_colormap_frame, textvariable=self.phase_colormap_var,
                                              values=diverging_cmaps, state="readonly")
-        self.phase_colormap_combo.pack(fill="x", pady=(0,10))
+        self.phase_colormap_combo.pack(fill="x", pady=(0,5))
         ToolTip(self.phase_colormap_combo, text="Colormap for chirality plot (diverging/circular preferred).")
-        self.phase_colormap_combo.bind("<<ComboboxSelected>>", lambda event: self._generate_sed_plot())
+        self.phase_colormap_combo.bind("<<ComboboxSelected>>", lambda event: self._on_phase_colormap_change())
 
         # Global Intensity Scaling (only for K-Grid)
-        self.global_scale_frame = ttk.Frame(viz_frame)
+        self.global_scale_frame = ttk.Frame(plot_content_frame)
         # Don't pack initially - will be shown by _update_viz_controls_state
         self.kgrid_global_scale_var = tk.BooleanVar(value=False)
         global_scale_check = ttk.Checkbutton(self.global_scale_frame, text="Global Intensity Scaling", 
@@ -452,23 +510,138 @@ class PSAMainWindow:
                                            command=lambda: self._plot_kgrid_heatmap(self.kgrid_freq_slider.get()) if hasattr(self, 'kgrid_freq_slider') else None)
         global_scale_check.pack(anchor="w", pady=(0,10))
         
-        # Spacer to push Generate Plot button to bottom
-        self.viz_spacer_frame = ttk.Frame(viz_frame)
-        self.viz_spacer_frame.pack(fill="both", expand=True)
-
+        # Generate plot button
+        self.plot_button = ttk.Button(plot_content_frame, text="Generate Plot", 
+                                     command=self._generate_plot, state="disabled")
+        self.plot_button.pack(fill="x", pady=(10,0))
+        
         # Plot status
         self.plot_status_var = tk.StringVar(value="No plot generated")
-        ttk.Label(viz_frame, textvariable=self.plot_status_var, foreground="blue").pack(anchor="w", side="bottom")
+        ttk.Label(plot_content_frame, textvariable=self.plot_status_var, foreground="blue").pack(anchor="w", pady=(5,0))
 
-        # Generate plot button (moved to bottom for better UX)
-        self.plot_button = ttk.Button(viz_frame, text="Generate Plot", 
-                                     command=self._generate_plot, state="disabled")
-        self.plot_button.pack(fill="x", pady=(20,10), side="bottom")
+        # Save functionality section (organized by function) - compressed spacing
+        save_section = ttk.Frame(plot_content_frame)
+        save_section.pack(fill="x", pady=(8,0))
+        self.save_section = save_section  # Store reference for positioning
+        
+        ttk.Label(save_section, text="Save Options:", font=("Arial", 11, "bold")).pack(anchor="w", pady=(0,3))
+        
+        # ===== SAVE DATA SECTION ===== - compressed spacing
+        data_save_frame = ttk.LabelFrame(save_section, text="Save Data", padding=(6, 2))
+        data_save_frame.pack(fill="x", pady=(0,3))
+        
+        # Save data button
+        self.save_data_button = ttk.Button(data_save_frame, text="Save Plot Data", 
+                                          command=self._save_plot_data, state="disabled")
+        self.save_data_button.pack(fill="x", pady=(0,3))
+        
+        # Data options frame
+        data_options_frame = ttk.Frame(data_save_frame)
+        data_options_frame.pack(fill="x")
+        
+        # Custom filename
+        ttk.Label(data_options_frame, text="Filename (optional):").pack(anchor="w")
+        self.custom_data_filename_var = tk.StringVar()
+        data_name_entry = ttk.Entry(data_options_frame, textvariable=self.custom_data_filename_var)
+        data_name_entry.pack(fill="x", pady=(1,3))
+        
+        # Data format
+        format_frame = ttk.Frame(data_options_frame)
+        format_frame.pack(fill="x")
+        ttk.Label(format_frame, text="Format:").pack(side="left")
+        self.save_format_var = tk.StringVar(value="npy")
+        format_combo = ttk.Combobox(format_frame, textvariable=self.save_format_var,
+                                   values=["npy", "csv"], state="readonly", width=8)
+        format_combo.pack(side="left", padx=(5,0))
+        ToolTip(format_combo, text="File format for saving plot data (.npy for NumPy arrays, .csv for comprehensive CSV)")
+        
+        # ===== SAVE PLOT SECTION ===== - compressed spacing
+        plot_save_frame = ttk.LabelFrame(save_section, text="Save Plot Image", padding=(6, 2))
+        plot_save_frame.pack(fill="x", pady=(0,3))
+        
+        # Save plot button
+        self.save_plot_image_button = ttk.Button(plot_save_frame, text="Save Current Plot", 
+                                                command=self._save_current_plot, state="disabled")
+        self.save_plot_image_button.pack(fill="x", pady=(0,3))
+        
+        # Plot options frame
+        plot_options_frame = ttk.Frame(plot_save_frame)
+        plot_options_frame.pack(fill="x")
+        
+        # Custom filename
+        ttk.Label(plot_options_frame, text="Filename (optional):").pack(anchor="w")
+        self.custom_plot_filename_var = tk.StringVar()
+        plot_name_entry = ttk.Entry(plot_options_frame, textvariable=self.custom_plot_filename_var)
+        plot_name_entry.pack(fill="x", pady=(1,3))
+        
+        # Format and quality options - compressed spacing
+        plot_qual_frame = ttk.Frame(plot_options_frame)
+        plot_qual_frame.pack(fill="x", pady=(0,3))
+        
+        # Image format
+        ttk.Label(plot_qual_frame, text="Format:").pack(side="left")
+        self.image_format_var = tk.StringVar(value="png")
+        image_format_combo = ttk.Combobox(plot_qual_frame, textvariable=self.image_format_var,
+                                         values=["png", "jpg", "svg", "pdf"], state="readonly", width=6)
+        image_format_combo.pack(side="left", padx=(5,10))
+        ToolTip(image_format_combo, text="Image format (PNG/JPG for raster, SVG/PDF for vector)")
+        
+        # DPI control
+        ttk.Label(plot_qual_frame, text="DPI:").pack(side="left")
+        self.plot_dpi_var = tk.IntVar(value=300)
+        dpi_combo = ttk.Combobox(plot_qual_frame, textvariable=self.plot_dpi_var,
+                                values=[150, 300, 600, 1200], state="readonly", width=6)
+        dpi_combo.pack(side="left", padx=(5,10))
+        ToolTip(dpi_combo, text="Resolution for raster images (150=screen, 300=print, 600=high quality)")
+        
+       
+        # Aspect ratio frame - compressed spacing
+        aspect_frame = ttk.Frame(plot_options_frame)
+        aspect_frame.pack(fill="x")
+        
+        ttk.Label(aspect_frame, text="Aspect Ratio (optional):").pack(anchor="w")
+        self.aspect_ratio_var = tk.StringVar()
+        aspect_entry = ttk.Entry(aspect_frame, textvariable=self.aspect_ratio_var, width=20)
+        aspect_entry.pack(anchor="w", pady=(1,0))
+        ToolTip(aspect_entry, text="Custom aspect ratio (e.g., 'equal', '1:1', '4:3', '16:9') or leave empty for auto")
+        
+        # ===== SAVE GIF SECTION ===== - compressed spacing
+        gif_save_frame = ttk.LabelFrame(save_section, text="Save K-Grid Animation", padding=(6, 2))
+        gif_save_frame.pack(fill="x", pady=(0,3))
+        
+        # Save gif button
+        self.save_kgrid_gif_button = ttk.Button(gif_save_frame, text="Save K-Grid Animation", 
+                                               command=self._save_kgrid_gif, state="disabled")
+        self.save_kgrid_gif_button.pack(fill="x", pady=(0,3))
+        
+        # GIF options frame
+        gif_options_frame = ttk.Frame(gif_save_frame)
+        gif_options_frame.pack(fill="x")
+        
+        # Custom filename
+        ttk.Label(gif_options_frame, text="Filename (optional):").pack(anchor="w")
+        self.custom_animation_filename_var = tk.StringVar()
+        anim_name_entry = ttk.Entry(gif_options_frame, textvariable=self.custom_animation_filename_var)
+        anim_name_entry.pack(fill="x", pady=(1,3))
+        
+        # Frame rate - compressed spacing
+        fps_frame = ttk.Frame(gif_options_frame)
+        fps_frame.pack(fill="x")
+        
+        ttk.Label(fps_frame, text="Frame Rate (fps):").pack(side="left")
+        self.gif_fps_var = tk.DoubleVar(value=5.0)
+        fps_entry = ttk.Entry(fps_frame, textvariable=self.gif_fps_var, width=10)
+        fps_entry.pack(side="left", padx=(5,0))
+        ToolTip(fps_entry, text="Animation frame rate in frames per second (e.g., 5.0, 10.0, 30.0)")
+
+        # Spacer to push everything up
+        self.viz_spacer_frame = ttk.Frame(plot_content_frame)
+        self.viz_spacer_frame.pack(fill="both", expand=True)
 
     def _create_ised_tab(self, notebook):
         """Create iSED reconstruction parameters tab"""
         ised_frame = ttk.Frame(notebook)
-        notebook.add(ised_frame, text="Atomic Visualization")
+        notebook.add(ised_frame, text="Reconstruction")
         
         ttk.Label(ised_frame, text="Click Parameters:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(10,5))
         
@@ -482,97 +655,65 @@ class PSAMainWindow:
         # Reconstruction parameters
         ttk.Label(ised_frame, text="Reconstruction Parameters:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(10,5))
         
-        # Number of frames
-        ttk.Label(ised_frame, text="Animation Frames:").pack(anchor="w")
+        # Number of frames and rescaling factor
         self.n_frames_var = tk.IntVar(value=100)
-        ttk.Entry(ised_frame, textvariable=self.n_frames_var).pack(fill="x", pady=(0,5))
+        self._create_labeled_entry(ised_frame, "Animation Frames:", self.n_frames_var)
         
-        # Rescaling factor
-        ttk.Label(ised_frame, text="Rescaling Factor:").pack(anchor="w")
         self.rescale_var = tk.StringVar(value="auto")
-        rescale_entry = ttk.Entry(ised_frame, textvariable=self.rescale_var)
-        rescale_entry.pack(fill="x", pady=(0,10))
+        _, rescale_entry = self._create_labeled_entry(ised_frame, "Rescaling Factor:", self.rescale_var, 
+                                                     pack_kwargs={'pady': (0,10)})
         ToolTip(rescale_entry, text="Rescaling factor for iSED atomic displacements.\n'auto' for automatic scaling, or a numerical value (e.g., 0.1, 1.0, 10.0).")
         
         # 3D Visualization Controls
         ttk.Label(ised_frame, text="3D Visualization Controls:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(20,5))
         
-        # Atom sizes for different types
-        ttk.Label(ised_frame, text="Atom Type 1 Size:").pack(anchor="w")
+        # Atom sizes using helper method
         self.atom_size_type1_var = tk.DoubleVar(value=0.3)
-        size1_frame = ttk.Frame(ised_frame)
-        size1_frame.pack(fill="x", pady=(0,5))
-        ttk.Scale(size1_frame, from_=0.05, to=2.0, variable=self.atom_size_type1_var, 
-                 orient="horizontal", command=self._update_atom_size).pack(side="left", fill="x", expand=True)
-        size1_label_var = tk.StringVar()
-        size1_label_var.set(f"{self.atom_size_type1_var.get():.2f}")
-        self.atom_size_type1_var.trace('w', lambda *args: size1_label_var.set(f"{self.atom_size_type1_var.get():.2f}"))
-        ttk.Label(size1_frame, textvariable=size1_label_var, width=5).pack(side="right")
+        self._create_labeled_scale(ised_frame, "Atom Type 1 Size:", self.atom_size_type1_var, 
+                                  0.05, 2.0, self._update_atom_size)
         
-        ttk.Label(ised_frame, text="Atom Type 2 Size:").pack(anchor="w")
         self.atom_size_type2_var = tk.DoubleVar(value=0.3)
-        size2_frame = ttk.Frame(ised_frame)
-        size2_frame.pack(fill="x", pady=(0,5))
-        ttk.Scale(size2_frame, from_=0.05, to=2.0, variable=self.atom_size_type2_var, 
-                 orient="horizontal", command=self._update_atom_size).pack(side="left", fill="x", expand=True)
-        size2_label_var = tk.StringVar()
-        size2_label_var.set(f"{self.atom_size_type2_var.get():.2f}")
-        self.atom_size_type2_var.trace('w', lambda *args: size2_label_var.set(f"{self.atom_size_type2_var.get():.2f}"))
-        ttk.Label(size2_frame, textvariable=size2_label_var, width=5).pack(side="right")
+        self._create_labeled_scale(ised_frame, "Atom Type 2 Size:", self.atom_size_type2_var, 
+                                  0.05, 2.0, self._update_atom_size)
         
-        # Atom transparency
-        ttk.Label(ised_frame, text="Transparency:").pack(anchor="w")
+        # Atom transparency using helper method
         self.atom_alpha_var = tk.DoubleVar(value=0.8)
-        alpha_frame = ttk.Frame(ised_frame)
-        alpha_frame.pack(fill="x", pady=(0,10))
-        ttk.Scale(alpha_frame, from_=0.1, to=1.0, variable=self.atom_alpha_var, 
-                 orient="horizontal", command=self._update_atom_alpha).pack(side="left", fill="x", expand=True)
-        alpha_label_var = tk.StringVar()
-        alpha_label_var.set(f"{self.atom_alpha_var.get():.1f}")
-        self.atom_alpha_var.trace('w', lambda *args: alpha_label_var.set(f"{self.atom_alpha_var.get():.1f}"))
-        ttk.Label(alpha_frame, textvariable=alpha_label_var, width=4).pack(side="right")
+        self._create_labeled_scale(ised_frame, "Transparency:", self.atom_alpha_var, 
+                                  0.1, 1.0, self._update_atom_alpha, "{:.1f}")
         
-        # Save permanently checkbox
-        self.save_permanently_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(ised_frame, text="Save reconstruction file permanently", 
-                       variable=self.save_permanently_var,
-                       command=self._toggle_save_mode).pack(anchor="w", pady=(5,10))
-        
-        # Output directory selection (initially hidden)
-        self.output_frame = ttk.Frame(ised_frame)
-        
-        ttk.Label(self.output_frame, text="Output Directory:").pack(anchor="w")
-        output_dir_frame = ttk.Frame(self.output_frame)
-        output_dir_frame.pack(fill="x", pady=(0,5))
-        
-        self.output_dir_var = tk.StringVar(value=str(Path.cwd() / "ised_results"))
-        self.output_entry = ttk.Entry(output_dir_frame, textvariable=self.output_dir_var)
-        self.output_entry.pack(side="left", fill="x", expand=True)
-        
-        ttk.Button(output_dir_frame, text="Browse...", 
-                  command=self._browse_output_dir).pack(side="right", padx=(5,0))
-        
-        # Output filename
-        ttk.Label(self.output_frame, text="Output Filename:").pack(anchor="w")
-        self.output_filename_var = tk.StringVar(value="ised_motion.dump")
-        ttk.Entry(self.output_frame, textvariable=self.output_filename_var).pack(fill="x", pady=(0,10))
+        # Extra padding before reconstruct button
+        ttk.Frame(ised_frame).pack(pady=(5,0))
         
         # Reconstruct button
         self.ised_button = ttk.Button(ised_frame, text="Reconstruct iSED", 
                                      command=self._reconstruct_ised, state="disabled")
         self.ised_button.pack(fill="x", pady=(20,10))
         
+        # iSED Saving Section
+        ttk.Label(ised_frame, text="Save Trajectory:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(10,5))
+        
+        # Custom iSED trajectory filename
+        ised_save_frame = ttk.Frame(ised_frame)
+        ised_save_frame.pack(fill="x", pady=(0,5))
+        
+        ttk.Label(ised_save_frame, text="Filename (optional):").pack(anchor="w")
+        self.custom_ised_filename_var = tk.StringVar()
+        ised_name_entry = ttk.Entry(ised_save_frame, textvariable=self.custom_ised_filename_var)
+        ised_name_entry.pack(fill="x", pady=(2,0))
+        ToolTip(ised_name_entry, text="Custom name for saved iSED trajectory (leave empty for auto-generated name)")
+        
+        # Save iSED trajectory button
+        self.save_ised_button = ttk.Button(ised_frame, text="Save iSED Trajectory", 
+                                          command=self._save_ised_trajectory, state="disabled")
+        self.save_ised_button.pack(fill="x", pady=(5,5))
+        
+        ttk.Label(ised_frame, text="Saved files will use the output directory from I/O tab", 
+                 font=("Arial", 8), foreground="gray").pack(anchor="w")
+        
         # Animation speed
-        ttk.Label(ised_frame, text="Animation Speed (fps):").pack(anchor="w")
         self.anim_fps_var = tk.DoubleVar(value=10.0)
-        speed_frame = ttk.Frame(ised_frame)
-        speed_frame.pack(fill="x", pady=(0,5))
-        ttk.Scale(speed_frame, from_=1.0, to=30.0, variable=self.anim_fps_var, 
-                 orient="horizontal", command=self._update_anim_speed).pack(side="left", fill="x", expand=True)
-        fps_label_var = tk.StringVar()
-        fps_label_var.set(f"{self.anim_fps_var.get():.1f}")
-        self.anim_fps_var.trace('w', lambda *args: fps_label_var.set(f"{self.anim_fps_var.get():.1f}"))
-        ttk.Label(speed_frame, textvariable=fps_label_var, width=4).pack(side="right")
+        self._create_labeled_scale(ised_frame, "Animation Speed (fps):", self.anim_fps_var, 
+                                  1.0, 30.0, self._update_anim_speed, "{:.1f}")
         
         # Animation controls
         anim_control_frame = ttk.Frame(ised_frame)
@@ -589,11 +730,11 @@ class PSAMainWindow:
         self.view_motion_button = ttk.Button(ised_frame, text="View in External Viewer", 
                                            command=self._view_atomic_motion, state="disabled")
         self.view_motion_button.pack(fill="x", pady=(10,5))
-        
+
         # iSED status
         self.ised_status_var = tk.StringVar(value="No iSED reconstruction")
         ttk.Label(ised_frame, textvariable=self.ised_status_var, foreground="blue").pack(anchor="w")
-        
+
     def _create_plot_panel(self, parent):
         """Create the right panel for plots"""
         plot_frame = ttk.Frame(parent)
@@ -803,12 +944,7 @@ class PSAMainWindow:
                     logger.warning(f"Error parsing direction string '{direction_str}': {e}. Using default.")
                     direction = [1, 1, 0]
                 
-                basis_types = None
-                if self.basis_types_var.get().strip():
-                    try:
-                        basis_types = [int(x.strip()) for x in self.basis_types_var.get().split(',')]
-                    except ValueError:
-                        pass
+                basis_types = self._get_basis_atom_types()
                 
                 k_mags, k_vecs = self.sed_calculator.get_k_path(
                     direction_spec=direction,
@@ -893,12 +1029,7 @@ class PSAMainWindow:
             self.sed_ax.clear()
             
             # Remove previous colorbar if it exists
-            if hasattr(self, 'sed_colorbar') and self.sed_colorbar is not None:
-                try:
-                    self.sed_colorbar.remove()
-                    del self.sed_colorbar
-                except Exception as e:
-                    logger.debug(f"Error removing colorbar: {e}")
+            self._cleanup_colorbar()
                     
             # Remove click marker if it exists
             if self.click_marker is not None:
@@ -969,13 +1100,7 @@ class PSAMainWindow:
                     plot_title = "SED - Click to select (k,ω) point"
                 
                 # Apply intensity scaling only for SED (not for chirality/phase)
-                scale_type = self.intensity_scale_var.get()
-                if scale_type == "log":
-                    data_to_plot = np.log10(np.maximum(data_to_plot, 1e-12))
-                elif scale_type == "sqrt":
-                    data_to_plot = np.sqrt(np.maximum(data_to_plot, 0))
-                elif scale_type == "dsqrt":
-                    data_to_plot = np.sqrt(np.sqrt(np.maximum(data_to_plot, 0)))
+                data_to_plot = self._apply_intensity_scaling(data_to_plot, self.intensity_scale_var.get())
 
             if data_to_plot is None:
                 messagebox.showerror("Plot Error", "No data available to plot. Please check settings and recalculate SED.")
@@ -1015,16 +1140,7 @@ class PSAMainWindow:
                 return
 
             # Remove any existing colorbar and its axes before plotting
-            try:
-                if hasattr(self, 'sed_colorbar') and self.sed_colorbar:
-                    self.sed_colorbar.remove()
-                    self.sed_colorbar = None
-                if hasattr(self, 'sed_colorbar_ax') and self.sed_colorbar_ax:
-                    if self.sed_colorbar_ax.get_figure() == self.sed_fig:
-                        self.sed_colorbar_ax.remove()
-                    self.sed_colorbar_ax = None
-            except Exception as e:
-                pass
+            self._cleanup_colorbar()
 
             # Plot
             im = self.sed_ax.pcolormesh(K, F, data_to_plot, 
@@ -1164,31 +1280,13 @@ class PSAMainWindow:
         
         # Run iSED reconstruction in main thread to avoid matplotlib threading issues
         try:
-            # Choose output location based on save mode
-            if self.save_permanently_var.get():
-                # Create output directory for permanent results
-                output_dir = Path(self.output_dir_var.get())
-                output_dir.mkdir(parents=True, exist_ok=True)
-                
-                # Generate unique filename if file exists
-                base_filename = self.output_filename_var.get()
-                if not base_filename.endswith('.dump'):
-                    base_filename += '.dump'
-                    
-                dump_file = output_dir / base_filename
-                counter = 1
-                while dump_file.exists():
-                    name_part = base_filename.replace('.dump', '')
-                    dump_file = output_dir / f"{name_part}_{counter:03d}.dump"
-                    counter += 1
-            else:
-                # Use temporary directory
-                temp_dir_obj = tempfile.TemporaryDirectory() # Use context manager for auto-cleanup if possible
-                self.current_temp_ised_dir = Path(temp_dir_obj.name)
-                dump_file = self.current_temp_ised_dir / "ised_motion.dump"
-                output_dir = self.current_temp_ised_dir
-                # Store the TemporaryDirectory object itself to prevent premature cleanup
-                self._current_temp_dir_obj = temp_dir_obj 
+            # Always use temporary directory for initial reconstruction
+            temp_dir_obj = tempfile.TemporaryDirectory()
+            self.current_temp_ised_dir = Path(temp_dir_obj.name)
+            dump_file = self.current_temp_ised_dir / "ised_motion.dump"
+            output_dir = self.current_temp_ised_dir
+            # Store the TemporaryDirectory object itself to prevent premature cleanup
+            self._current_temp_dir_obj = temp_dir_obj
             
             # Parse direction for iSED
             direction_str = self.direction_var.get().strip()
@@ -1242,17 +1340,13 @@ class PSAMainWindow:
                     # Load and display atomic motion
                     self._load_atomic_motion()
                     
-                    if self.save_permanently_var.get():
-                        self.ised_status_var.set(f"iSED saved: {dump_file.name}")
-                        # Show success message with file location for permanent saves
-                        messagebox.showinfo("iSED Complete", 
-                                          f"iSED reconstruction saved to:\n{dump_file}\n\n"
-                                          f"Selected point: k={self.selected_k:.3f}, ω={self.selected_w:.3f} THz")
-                    else:
-                        self.ised_status_var.set("iSED complete (temporary)")
+                    self.ised_status_var.set("iSED reconstruction complete (temporary)")
                         
                     self.view_motion_button.config(state="normal")
                     self.ised_button.config(state="normal")
+                    
+                    # Update visualization controls to enable save button
+                    self._update_viz_controls_state()
                     
                     # Switch to Real Space tab
                     self.plot_notebook.select(1)
@@ -1755,38 +1849,59 @@ class PSAMainWindow:
             
         calc_type = self.sed_calculation_type
         
-        if calc_type == "K-Path":
-            # Hide K-Grid specific controls
-            self.global_scale_frame.pack_forget()
+        # Handle chiral toggle button for both K-Path and K-Grid
+        has_phase_data = self.sed_result is not None and hasattr(self.sed_result, 'phase') and self.sed_result.phase is not None
+        if has_phase_data:
+            # Show the chiral toggle button before the save section
+            self.plot_chiral_frame.pack(fill="x", pady=(0,5), before=self.save_section)
             
-            # Handle chiral toggle button
-            has_phase_data = self.sed_result is not None and hasattr(self.sed_result, 'phase') and self.sed_result.phase is not None
-            if has_phase_data:
-                # Show the chiral toggle button
-                self.plot_chiral_frame.pack(fill="x", pady=(0,10), before=self.viz_spacer_frame)
-                # If toggle is currently enabled, show phase colormap
-                if self.plot_chiral_var.get():
-                    self.phase_colormap_frame.pack(fill="x", pady=(0,10), before=self.viz_spacer_frame)
-                else:
-                    self.phase_colormap_frame.pack_forget()
+            # If toggle is currently enabled, show phase colormap
+            if self.plot_chiral_var.get():
+                self.phase_colormap_frame.pack(fill="x", pady=(0,5), before=self.save_section)
             else:
-                # Hide chiral controls if no chiral data
-                self.plot_chiral_frame.pack_forget()
                 self.phase_colormap_frame.pack_forget()
-                self.plot_chiral_var.set(False)  # Reset toggle state
-                
-        else:  # K-Grid
-            # Show K-Grid specific controls, hide K-Path specific ones
+        else:
+            # Hide chiral controls if no chiral data
             self.plot_chiral_frame.pack_forget()
             self.phase_colormap_frame.pack_forget()
             self.plot_chiral_var.set(False)  # Reset toggle state
-            self.global_scale_frame.pack(fill="x", pady=(0,10), before=self.viz_spacer_frame)
+        
+        if calc_type == "K-Path":
+            # Hide K-Grid specific controls for K-Path
+            self.global_scale_frame.pack_forget()
+                
+        else:  # K-Grid
+            # Show K-Grid specific controls only when not in chiral mode
+            # Global scaling doesn't apply to phase data
+            if has_phase_data and self.plot_chiral_var.get():
+                self.global_scale_frame.pack_forget()
+            else:
+                self.global_scale_frame.pack(fill="x", pady=(0,5), before=self.save_section)
 
         # Plot button state depends if any SED result is available
         if hasattr(self, 'sed_result') and self.sed_result:
             self.plot_button.config(state="normal")
+            # Enable save data button if we have plot data
+            self.save_data_button.config(state="normal")
+            # Enable save plot image button if we have plot data
+            self.save_plot_image_button.config(state="normal")
+            
+            # Enable k-grid gif button only for k-grid mode with data
+            if calc_type == "K-Grid" and hasattr(self, 'kgrid_sed_data') and self.kgrid_sed_data is not None:
+                self.save_kgrid_gif_button.config(state="normal")
+            else:
+                self.save_kgrid_gif_button.config(state="disabled")
         else:
             self.plot_button.config(state="disabled")
+            self.save_data_button.config(state="disabled")
+            self.save_plot_image_button.config(state="disabled")
+            self.save_kgrid_gif_button.config(state="disabled")
+            
+        # Enable save iSED button if we have iSED data
+        if hasattr(self, 'ised_result_path') and self.ised_result_path:
+            self.save_ised_button.config(state="normal")
+        else:
+            self.save_ised_button.config(state="disabled")
 
     def _validate_int_input(self, P):
         """Validate that the input P is an integer or empty. Allows positive integers."""
@@ -1845,14 +1960,31 @@ class PSAMainWindow:
         """Handle plot chiral toggle button changes."""
         if self.plot_chiral_var.get():
             # Show phase colormap when chiral is enabled
-            self.phase_colormap_frame.pack(fill="x", pady=(0,10), before=self.viz_spacer_frame)
+            self.phase_colormap_frame.pack(fill="x", pady=(0,5), before=self.save_section)
         else:
             # Hide phase colormap when chiral is disabled
             self.phase_colormap_frame.pack_forget()
         
-        # Update the plot if we have data
-        if hasattr(self, 'sed_calculation_type') and self.sed_calculation_type == "K-Path":
-            self._generate_sed_plot()
+        # Update global scaling visibility for K-Grid mode
+        if hasattr(self, 'sed_calculation_type') and self.sed_calculation_type == "K-Grid":
+            has_phase_data = self.sed_result is not None and hasattr(self.sed_result, 'phase') and self.sed_result.phase is not None
+            if has_phase_data and self.plot_chiral_var.get():
+                # Hide global scaling when in chiral mode
+                self.global_scale_frame.pack_forget()
+            else:
+                # Show global scaling when in SED mode
+                self.global_scale_frame.pack(fill="x", pady=(0,5), before=self.save_section)
+        
+        # Immediately update the plot if we have data
+        if hasattr(self, 'sed_calculation_type'):
+            if self.sed_calculation_type == "K-Path":
+                self._generate_sed_plot()
+            elif self.sed_calculation_type == "K-Grid":
+                # For k-grid, regenerate the heatmap at current frequency
+                if hasattr(self, 'kgrid_freq_slider') and hasattr(self, 'kgrid_freqs'):
+                    current_freq = self.kgrid_freq_slider.get()
+                    freq_idx = np.argmin(np.abs(self.kgrid_freqs - current_freq))
+                    self._plot_kgrid_heatmap(freq_idx)
 
     def _update_kgrid_axis_controls(self):
         """Update axis labels and entry states based on selected plane."""
@@ -1937,11 +2069,9 @@ class PSAMainWindow:
         if mode == "K-Path":
             self.kpath_frame.pack(fill="x", pady=(0,10), before=self.sed_spacer_frame)
             self.kgrid_frame.pack_forget()
-            self.chirality_frame.pack(fill="x", pady=(0,10), before=self.sed_spacer_frame)
         else:  # K-Grid
             self.kpath_frame.pack_forget()
             self.kgrid_frame.pack(fill="x", pady=(0,10), before=self.sed_spacer_frame)
-            self.chirality_frame.pack_forget()
             self._update_kgrid_axis_controls()
         # Update visualization controls if SED is already calculated
         if hasattr(self, 'sed_result') and self.sed_result:
@@ -2011,20 +2141,43 @@ class PSAMainWindow:
                     k_fixed_val=k_fixed_val
                 )
                 
-                basis_types = None
-                if self.basis_types_var.get().strip():
-                    try:
-                        basis_types = [int(x.strip()) for x in self.basis_types_var.get().split(',')]
-                    except ValueError:
-                        pass
+                basis_types = self._get_basis_atom_types()
+                
+                # Handle chirality calculation for K-Grid
+                summation_mode_to_use = self.summation_mode_var.get()
+                if self.chiral_sed_var.get():
+                    if summation_mode_to_use != 'coherent':
+                        logger.info("Chirality calculation selected for K-Grid, forcing coherent summation mode.")
+                        summation_mode_to_use = 'coherent'
                 
                 sed_obj = self.sed_calculator.calculate(
                     k_points_mags=k_mags,
                     k_vectors_3d=k_vecs,
                     k_grid_shape=k_grid_shape,
                     basis_atom_types=basis_types,
-                    summation_mode=self.summation_mode_var.get()
+                    summation_mode=summation_mode_to_use
                 )
+                
+                # Calculate phase for K-Grid if requested
+                calculated_phase = None
+                if self.chiral_sed_var.get():
+                    if hasattr(sed_obj, 'sed') and sed_obj.sed is not None and sed_obj.is_complex:
+                        if sed_obj.sed.ndim == 3 and sed_obj.sed.shape[-1] >= 2:
+                            axis = self.chiral_axis_var.get()
+                            if axis == 'x':
+                                idx1, idx2 = 1, 2
+                            elif axis == 'y':
+                                idx1, idx2 = 0, 2
+                            else:
+                                idx1, idx2 = 0, 1
+                            # For K-Grid, we need to calculate phase for each frequency slice
+                            Z1 = sed_obj.sed[:,:,idx1]
+                            Z2 = sed_obj.sed[:,:,idx2]
+                            logger.info(f"Calculating chiral phase for K-Grid using axis {axis} (components {idx1} and {idx2}).")
+                            calculated_phase = self.sed_calculator.calculate_chiral_phase(
+                                Z1=Z1, Z2=Z2, angle_range_opt="C"
+                            )
+                            logger.info("K-Grid chiral phase calculation complete.")
                 
                 # Store the SED result for the plotting
                 self.sed_result = SED(
@@ -2033,7 +2186,7 @@ class PSAMainWindow:
                     k_points=sed_obj.k_points,
                     k_vectors=sed_obj.k_vectors,
                     k_grid_shape=sed_obj.k_grid_shape,
-                    phase=None,  # No chirality for k-grid
+                    phase=calculated_phase,  # Now includes phase for K-Grid if calculated
                     is_complex=sed_obj.is_complex
                 )
                 
@@ -2208,16 +2361,7 @@ class PSAMainWindow:
             
         self.sed_ax.clear()
         # Remove previous colorbar and its axes if they exist
-        try:
-            if hasattr(self, 'sed_colorbar') and self.sed_colorbar:
-                self.sed_colorbar.remove()
-                self.sed_colorbar = None
-            if hasattr(self, 'sed_colorbar_ax') and self.sed_colorbar_ax:
-                if self.sed_colorbar_ax.get_figure() == self.sed_fig:
-                    self.sed_colorbar_ax.remove()
-                self.sed_colorbar_ax = None
-        except Exception:
-            pass
+        self._cleanup_colorbar()
             
         if not self.kgrid_sed_result or self.kgrid_freqs is None or self.kgrid_sed_data is None:
             self.sed_ax.set_title("No k-grid data")
@@ -2225,38 +2369,49 @@ class PSAMainWindow:
             return
             
         try:
-            # Get intensity at this frequency
+            # Get intensity or phase at this frequency based on chiral toggle
             sed = self.kgrid_sed_result
             freq_val = self.kgrid_freqs[int(freq_idx)]
-            if sed.is_complex:
-                intensity = np.sum(np.abs(self.kgrid_sed_data[int(freq_idx), :, :])**2, axis=-1)
-            else:
-                if self.kgrid_sed_data.ndim == 3:
-                    intensity = np.sum(self.kgrid_sed_data[int(freq_idx), :, :], axis=-1)
-                elif self.kgrid_sed_data.ndim == 2:
-                    intensity = self.kgrid_sed_data[int(freq_idx), :]
-                else:
-                    self.sed_ax.set_title("Unsupported SED shape")
-                    self.sed_canvas.draw()
-                    return
-                    
-            # Apply intensity scaling
-            scale_type = self.intensity_scale_var.get()
-            if scale_type == "log":
-                intensity = np.log10(np.maximum(intensity, 1e-12))
-            elif scale_type == "sqrt":
-                intensity = np.sqrt(np.maximum(intensity, 0))
-            elif scale_type == "dsqrt":
-                intensity = np.sqrt(np.sqrt(np.maximum(intensity, 0)))
-            # else linear: do nothing
             
+            # Check if we should plot chiral/phase data
+            plot_chiral = self.plot_chiral_var.get()
+            has_phase_data = hasattr(self.sed_result, 'phase') and self.sed_result.phase is not None
+            
+            if plot_chiral and has_phase_data:
+                # Plot phase data
+                intensity = self.sed_result.phase[int(freq_idx), :]
+                colorbar_label = "Phase Angle (radians)"
+                plot_title = f"Chirality @ {freq_val:.2f} THz"
+                effective_cmap = self.phase_colormap_var.get()
+                # Don't apply intensity scaling to phase data
+            else:
+                # Plot SED intensity
+                if sed.is_complex:
+                    intensity = np.sum(np.abs(self.kgrid_sed_data[int(freq_idx), :, :])**2, axis=-1)
+                else:
+                    if self.kgrid_sed_data.ndim == 3:
+                        intensity = np.sum(self.kgrid_sed_data[int(freq_idx), :, :], axis=-1)
+                    elif self.kgrid_sed_data.ndim == 2:
+                        intensity = self.kgrid_sed_data[int(freq_idx), :]
+                    else:
+                        self.sed_ax.set_title("Unsupported SED shape")
+                        self.sed_canvas.draw()
+                        return
+                
+                # Apply intensity scaling only for SED data
+                intensity = self._apply_intensity_scaling(intensity, self.intensity_scale_var.get())
+                colorbar_label = "Intensity"
+                plot_title = f"SED @ {freq_val:.2f} THz"
+                effective_cmap = self.colormap_var.get()
+                    
             n_kx = len(self.kgrid_kx)
             n_ky = len(self.kgrid_ky)
             intensity_grid = intensity.reshape(n_kx, n_ky).T # Transpose for correct orientation
             X, Y = np.meshgrid(self.kgrid_kx, self.kgrid_ky)
-            # Global scaling with caching for performance
+            
+            # Global scaling with caching for performance (only for SED, not phase)
             vmin = vmax = None
-            if getattr(self, 'kgrid_global_scale_var', None) and self.kgrid_global_scale_var.get():
+            if not plot_chiral and getattr(self, 'kgrid_global_scale_var', None) and self.kgrid_global_scale_var.get():
                 # Check if we have cached values for the current scale type
                 current_scale_type = self.intensity_scale_var.get()
                 if (hasattr(self, '_cached_global_vmin') and hasattr(self, '_cached_global_vmax') and 
@@ -2278,29 +2433,24 @@ class PSAMainWindow:
                     
                     if all_intensity is not None:
                         # Apply scaling to all_intensity
-                        if current_scale_type == "log":
-                            all_intensity = np.log10(np.maximum(all_intensity, 1e-12))
-                        elif current_scale_type == "sqrt":
-                            all_intensity = np.sqrt(np.maximum(all_intensity, 0))
-                        elif current_scale_type == "dsqrt":
-                            all_intensity = np.sqrt(np.sqrt(np.maximum(all_intensity, 0)))
+                        all_intensity = self._apply_intensity_scaling(all_intensity, current_scale_type)
                         
                         # Cache the results
                         self._cached_global_vmin = vmin = np.nanmin(all_intensity)
                         self._cached_global_vmax = vmax = np.nanmax(all_intensity)
                         self._cached_scale_type = current_scale_type
             
-            pcm = self.sed_ax.pcolormesh(X, Y, intensity_grid, cmap=self.colormap_var.get(), shading='auto', vmin=vmin, vmax=vmax)
+            pcm = self.sed_ax.pcolormesh(X, Y, intensity_grid, cmap=effective_cmap, shading='auto', vmin=vmin, vmax=vmax)
             self.sed_ax.set_xlabel(self.kgrid_xlabel)
             self.sed_ax.set_ylabel(self.kgrid_ylabel)
-            self.sed_ax.set_title(f"SED @ {freq_val:.2f} THz")
+            self.sed_ax.set_title(plot_title)
             
             # Add colorbar using make_axes_locatable
             divider = make_axes_locatable(self.sed_ax)
             self.sed_colorbar_ax = divider.append_axes("right", size="5%", pad=0.1)
             self.sed_colorbar_ax.clear()
             self.sed_colorbar = self.sed_fig.colorbar(pcm, cax=self.sed_colorbar_ax)
-            self.sed_colorbar.set_label("Intensity", fontsize=12)
+            self.sed_colorbar.set_label(colorbar_label, fontsize=12)
             
             self.sed_canvas.draw()
             
@@ -2318,6 +2468,569 @@ class PSAMainWindow:
             # Plot the first frequency if we have data
             if hasattr(self, 'kgrid_freqs') and len(self.kgrid_freqs) > 0:
                 self._plot_kgrid_heatmap(0)
+
+    def _save_plot_data(self):
+        """Save current plot data as numpy or CSV files"""
+        try:
+            if not hasattr(self, 'sed_result') or not self.sed_result:
+                messagebox.showerror("Error", "No plot data available to save")
+                return
+                
+            # Create output directory
+            output_dir = Path(self.output_dir_var.get())
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            format_type = self.save_format_var.get()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            if hasattr(self, 'sed_calculation_type'):
+                calc_type = self.sed_calculation_type.lower().replace("-", "_")
+            else:
+                calc_type = "unknown"
+            
+            # Use custom filename if provided, otherwise generate one
+            custom_name = self.custom_data_filename_var.get().strip()
+            if custom_name:
+                # Remove extension if user provided one
+                custom_name = Path(custom_name).stem
+                base_filename = custom_name
+            else:
+                base_filename = f"psa_{calc_type}_data_{timestamp}"
+            
+            if format_type == "npy":
+                # Save as numpy arrays
+                
+                # Save frequencies
+                freq_file = output_dir / f"{base_filename}_frequencies.npy"
+                np.save(freq_file, self.sed_result.freqs)
+                
+                # Save SED data
+                sed_file = output_dir / f"{base_filename}_sed.npy"
+                np.save(sed_file, self.sed_result.sed)
+                
+                # Save k-points/k-vectors
+                k_points_file = output_dir / f"{base_filename}_k_points.npy"
+                if hasattr(self.sed_result, 'k_points') and self.sed_result.k_points is not None:
+                    np.save(k_points_file, self.sed_result.k_points)
+                elif hasattr(self.sed_result, 'k_vectors') and self.sed_result.k_vectors is not None:
+                    np.save(k_points_file, self.sed_result.k_vectors)
+                
+                # Save phase data if available (chirality)
+                if hasattr(self.sed_result, 'phase') and self.sed_result.phase is not None:
+                    phase_file = output_dir / f"{base_filename}_phase.npy"
+                    np.save(phase_file, self.sed_result.phase)
+                
+                saved_files = [freq_file, sed_file, k_points_file]
+                if hasattr(self.sed_result, 'phase') and self.sed_result.phase is not None:
+                    saved_files.append(phase_file)
+                    
+                messagebox.showinfo("Save Complete", 
+                                   f"Plot data saved as .npy files:\n" + 
+                                   "\n".join([f.name for f in saved_files]))
+                                   
+            elif format_type == "csv":
+                # Save as CSV files
+                
+                # For k-path data, create a single CSV with columns
+                if calc_type == "k_path":
+                    csv_file = output_dir / f"{base_filename}.csv"
+                    
+                    # Prepare data - frequencies are rows, k-points are columns
+                    try:
+                        import pandas as pd
+                    except ImportError:
+                        messagebox.showerror("Error", "pandas is required for CSV export. Please install it with: pip install pandas")
+                        return
+
+                    freqs = self.sed_result.freqs
+                    sed_data = self.sed_result.sed
+                    k_points = self.sed_result.k_points if hasattr(self.sed_result, 'k_points') else np.arange(sed_data.shape[1])
+                    
+                    # Create comprehensive CSV with metadata and all data
+                    with open(csv_file, 'w') as f:
+                        # Write metadata header
+                        f.write("# PSA K-Path SED Data Export\n")
+                        f.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        f.write(f"# Calculation Type: {calc_type.upper()}\n")
+                        f.write(f"# Data Shape: {sed_data.shape}\n")
+                        f.write(f"# Is Complex: {getattr(self.sed_result, 'is_complex', False)}\n")
+                        f.write(f"# Direction: {self.direction_var.get()}\n")
+                        f.write(f"# BZ Coverage: {self.bz_coverage_var.get()}\n")
+                        f.write(f"# Frequency Range: {freqs.min():.3f} to {freqs.max():.3f} THz\n")
+                        f.write("#\n")
+                    
+                    # Handle 3D SED data (freq, k-points, components)
+                    if sed_data.ndim == 3:
+                        # Create a multi-level CSV with all components
+                        data_dict = {'Frequency_THz': freqs}
+                        
+                        # Add k-point coordinates
+                        for i, k_val in enumerate(k_points):
+                            # Total intensity (summed over components)
+                            if hasattr(self.sed_result, 'is_complex') and self.sed_result.is_complex:
+                                total_intensity = np.sum(np.abs(sed_data[:, i, :])**2, axis=-1)
+                            else:
+                                total_intensity = np.sum(sed_data[:, i, :], axis=-1)
+                            data_dict[f"k{i:03d}_total"] = total_intensity
+                            
+                            # Individual components
+                            for comp_idx in range(sed_data.shape[-1]):
+                                comp_data = sed_data[:, i, comp_idx]
+                                if hasattr(self.sed_result, 'is_complex') and self.sed_result.is_complex:
+                                    comp_data = np.abs(comp_data)**2
+                                data_dict[f"k{i:03d}_comp{comp_idx}"] = comp_data
+                    
+                    elif sed_data.ndim == 2:
+                        # 2D data - frequencies vs k-points
+                        data_dict = {'Frequency_THz': freqs}
+                        for i, k_val in enumerate(k_points):
+                            data_dict[f"k{i:03d}_{k_val:.3f}"] = sed_data[:, i]
+                    
+                    else:
+                        # 1D or other, convert to 2D
+                        reshaped_data = sed_data.reshape(len(freqs), -1)
+                        data_dict = {'Frequency_THz': freqs}
+                        for i in range(reshaped_data.shape[1]):
+                            data_dict[f"k{i:03d}"] = reshaped_data[:, i]
+                    
+                    # Create DataFrame and append to CSV
+                    df = pd.DataFrame(data_dict)
+                    df.to_csv(csv_file, mode='a', index=False)
+                    
+                    messagebox.showinfo("Save Complete", f"K-Path data saved as comprehensive CSV:\n{csv_file.name}")
+                    
+                else:  # k-grid data
+                    csv_file = output_dir / f"{base_filename}.csv"
+                    
+                    try:
+                        import pandas as pd
+                    except ImportError:
+                        messagebox.showerror("Error", "pandas is required for CSV export. Please install it with: pip install pandas")
+                        return
+
+                    # Create comprehensive CSV for k-grid data
+                    with open(csv_file, 'w') as f:
+                        # Write metadata header
+                        f.write("# PSA K-Grid SED Data Export\n")
+                        f.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        f.write(f"# Calculation Type: {calc_type.upper()}\n")
+                        f.write(f"# Data Shape: {self.sed_result.sed.shape}\n")
+                        f.write(f"# K-Grid Shape: {getattr(self.sed_result, 'k_grid_shape', 'N/A')}\n")
+                        f.write(f"# Frequency Range: {self.sed_result.freqs.min():.3f} to {self.sed_result.freqs.max():.3f} THz\n")
+                        f.write(f"# Plane: {self.kgrid_plane_var.get()}\n")
+                        f.write("#\n")
+                    
+                    # For k-grid, flatten the data into a single table
+                    # Each row will be: frequency, kx, ky, kz, intensity
+                    data_list = []
+                    
+                    freqs = self.sed_result.freqs
+                    k_vectors = self.sed_result.k_vectors
+                    
+                    for freq_idx, freq_val in enumerate(freqs):
+                        for k_idx, k_vec in enumerate(k_vectors):
+                            # Get intensity at this frequency and k-point
+                            if hasattr(self.sed_result, 'is_complex') and self.sed_result.is_complex:
+                                if self.sed_result.sed.ndim == 3:
+                                    intensity = np.sum(np.abs(self.sed_result.sed[freq_idx, k_idx, :])**2)
+                                else:
+                                    intensity = np.abs(self.sed_result.sed[freq_idx, k_idx])**2
+                            else:
+                                if self.sed_result.sed.ndim == 3:
+                                    intensity = np.sum(self.sed_result.sed[freq_idx, k_idx, :])
+                                else:
+                                    intensity = self.sed_result.sed[freq_idx, k_idx]
+                            
+                            data_list.append({
+                                'Frequency_THz': freq_val,
+                                'kx': k_vec[0],
+                                'ky': k_vec[1], 
+                                'kz': k_vec[2],
+                                'Intensity': intensity
+                            })
+                    
+                    # Create DataFrame and append to CSV
+                    df = pd.DataFrame(data_list)
+                    df.to_csv(csv_file, mode='a', index=False)
+                    
+                    messagebox.showinfo("Save Complete", f"K-Grid data saved as comprehensive CSV:\n{csv_file.name}")
+                                       
+        except Exception as e:
+            logger.error(f"Error saving plot data: {e}")
+            messagebox.showerror("Error", f"Failed to save plot data:\n{str(e)}")
+
+    def _save_kgrid_gif(self):
+        """Save k-grid animation as GIF"""
+        try:
+            if not hasattr(self, 'kgrid_sed_data') or self.kgrid_sed_data is None:
+                messagebox.showerror("Error", "No k-grid data available to save as animation")
+                return
+                
+            if not hasattr(self, 'kgrid_freqs') or len(self.kgrid_freqs) == 0:
+                messagebox.showerror("Error", "No frequency data available for animation")
+                return
+            
+            # Create output directory
+            output_dir = Path(self.output_dir_var.get())
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Use custom filename if provided, otherwise generate one
+            custom_name = self.custom_animation_filename_var.get().strip()
+            if custom_name:
+                # Remove extension if user provided one
+                custom_name = Path(custom_name).stem
+                gif_file = output_dir / f"{custom_name}.gif"
+            else:
+                gif_file = output_dir / f"kgrid_animation_{timestamp}.gif"
+            
+            # Show progress dialog
+            progress = ProgressDialog(self.root, "Creating GIF Animation...")
+            progress.update_message("Preparing frames...", f"Total frames: {len(self.kgrid_freqs)}")
+            
+            # Get user-specified DPI for consistent quality with image saving
+            gif_dpi = self.plot_dpi_var.get()
+            
+            # Create temporary figure for animation frames with fixed layout
+            temp_fig = Figure(figsize=(10, 8), dpi=gif_dpi)  # Use user-specified DPI
+            temp_fig.subplots_adjust(left=0.1, right=0.85, top=0.9, bottom=0.1)  # Fixed layout
+            temp_ax = temp_fig.add_subplot(111)
+            
+            frames = []
+            total_frames = len(self.kgrid_freqs)
+            
+            # Pre-calculate global scaling if enabled
+            vmin = vmax = None
+            if getattr(self, 'kgrid_global_scale_var', None) and self.kgrid_global_scale_var.get():
+                if hasattr(self, 'sed_result') and self.sed_result.is_complex:
+                    all_intensity = np.sum(np.abs(self.kgrid_sed_data)**2, axis=-1)
+                else:
+                    if self.kgrid_sed_data.ndim == 3:
+                        all_intensity = np.sum(self.kgrid_sed_data, axis=-1)
+                    else:
+                        all_intensity = self.kgrid_sed_data
+                
+                # Apply scaling
+                scale_type = self.intensity_scale_var.get()
+                if scale_type == "log":
+                    all_intensity = np.log10(np.maximum(all_intensity, 1e-12))
+                elif scale_type == "sqrt":
+                    all_intensity = np.sqrt(np.maximum(all_intensity, 0))
+                elif scale_type == "dsqrt":
+                    all_intensity = np.sqrt(np.sqrt(np.maximum(all_intensity, 0)))
+                
+                vmin = np.nanmin(all_intensity)
+                vmax = np.nanmax(all_intensity)
+            
+            # Create a fixed colorbar position
+            from mpl_toolkits.axes_grid1 import make_axes_locatable
+            divider = make_axes_locatable(temp_ax)
+            cax = divider.append_axes("right", size="5%", pad=0.1)
+            
+            for i, freq_val in enumerate(self.kgrid_freqs):
+                if i % 5 == 0:  # Update progress every 5 frames
+                    progress.update_message(f"Generating frame {i+1}/{total_frames}", 
+                                          f"Frequency: {freq_val:.2f} THz")
+                    self.root.update()
+                
+                temp_ax.clear()
+                cax.clear()
+                
+                # Get intensity at this frequency
+                if hasattr(self, 'sed_result') and self.sed_result.is_complex:
+                    intensity = np.sum(np.abs(self.kgrid_sed_data[i, :, :])**2, axis=-1)
+                else:
+                    if self.kgrid_sed_data.ndim == 3:
+                        intensity = np.sum(self.kgrid_sed_data[i, :, :], axis=-1)
+                    else:
+                        intensity = self.kgrid_sed_data[i, :]
+                
+                # Apply intensity scaling
+                scale_type = self.intensity_scale_var.get()
+                if scale_type == "log":
+                    intensity = np.log10(np.maximum(intensity, 1e-12))
+                elif scale_type == "sqrt":
+                    intensity = np.sqrt(np.maximum(intensity, 0))
+                elif scale_type == "dsqrt":
+                    intensity = np.sqrt(np.sqrt(np.maximum(intensity, 0)))
+                
+                # Reshape for plotting
+                n_kx = len(self.kgrid_kx)
+                n_ky = len(self.kgrid_ky)
+                intensity_grid = intensity.reshape(n_kx, n_ky).T
+                X, Y = np.meshgrid(self.kgrid_kx, self.kgrid_ky)
+                
+                # Plot with fixed colorbar
+                pcm = temp_ax.pcolormesh(X, Y, intensity_grid, cmap=self.colormap_var.get(), 
+                                        shading='auto', vmin=vmin, vmax=vmax)
+                temp_ax.set_xlabel(self.kgrid_xlabel)
+                temp_ax.set_ylabel(self.kgrid_ylabel)
+                temp_ax.set_title(f"SED @ {freq_val:.2f} THz")
+                
+                # Add colorbar to fixed position
+                cbar = temp_fig.colorbar(pcm, cax=cax)
+                cbar.set_label("Intensity")
+                
+                # Draw the figure
+                temp_fig.canvas.draw()
+                
+                # Use savefig method for consistent image capture
+                buf_io = BytesIO()
+                temp_fig.savefig(buf_io, format='png', dpi=gif_dpi, bbox_inches=None)  # Use user-specified DPI
+                buf_io.seek(0)
+                
+                # Read with PIL for consistent array format
+                try:
+                    from PIL import Image
+                    img = Image.open(buf_io)
+                    # Convert to RGB if needed and ensure consistent size
+                    img = img.convert('RGB')
+                    frame_array = np.array(img)
+                    frames.append(frame_array)
+                except ImportError:
+                    # Fallback without PIL
+                    buf_io.seek(0)
+                    import matplotlib.image as mpimg
+                    frame_array = mpimg.imread(buf_io, format='png')
+                    # Convert to 0-255 range if needed
+                    if frame_array.max() <= 1.0:
+                        frame_array = (frame_array * 255).astype(np.uint8)
+                    # Ensure RGB (remove alpha if present)
+                    if frame_array.shape[-1] == 4:
+                        frame_array = frame_array[:, :, :3]
+                    frames.append(frame_array)
+                
+                buf_io.close()
+            
+            progress.update_message("Saving GIF...", "Please wait...")
+            
+            # Verify all frames have the same shape
+            if frames:
+                first_shape = frames[0].shape
+                for i, frame in enumerate(frames):
+                    if frame.shape != first_shape:
+                        logger.warning(f"Frame {i} has different shape: {frame.shape} vs {first_shape}")
+                        # Resize to match first frame if needed
+                        if len(frame.shape) == 3 and len(first_shape) == 3:
+                            from PIL import Image
+                            frame_img = Image.fromarray(frame)
+                            frame_img = frame_img.resize((first_shape[1], first_shape[0]), Image.Resampling.LANCZOS)
+                            frames[i] = np.array(frame_img)
+            
+            # Save as GIF with user-specified frame rate
+            fps = self.gif_fps_var.get()
+            duration = int(1000 / fps)  # Convert fps to ms per frame
+            imageio.mimsave(gif_file, frames, duration=duration, loop=0)
+            
+            progress.close()
+            messagebox.showinfo("Save Complete", f"K-grid animation saved as:\n{gif_file.name}")
+            
+        except Exception as e:
+            if 'progress' in locals():
+                progress.close()
+            logger.error(f"Error saving k-grid GIF: {e}")
+            messagebox.showerror("Error", f"Failed to save k-grid animation:\n{str(e)}")
+
+    def _save_ised_trajectory(self):
+        """Save the current iSED trajectory to the output directory"""
+        try:
+            if not hasattr(self, 'ised_result_path') or not self.ised_result_path:
+                messagebox.showerror("Error", "No iSED trajectory available to save")
+                return
+                
+            if not Path(self.ised_result_path).exists():
+                messagebox.showerror("Error", "iSED trajectory file not found")
+                return
+            
+            # Create output directory
+            output_dir = Path(self.output_dir_var.get())
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Use custom filename if provided, otherwise generate one
+            custom_name = self.custom_ised_filename_var.get().strip()
+            if custom_name:
+                # Remove extension if user provided one
+                custom_name = Path(custom_name).stem
+                filename = f"{custom_name}.dump"
+                metadata_filename = f"{custom_name}_metadata.txt"
+            else:
+                # Generate filename with timestamp and selected point info
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                k_val = getattr(self, 'selected_k', 0)
+                w_val = getattr(self, 'selected_w', 0)
+                filename = f"ised_trajectory_k{k_val:.3f}_w{w_val:.3f}_{timestamp}.dump"
+                metadata_filename = f"ised_metadata_k{k_val:.3f}_w{w_val:.3f}_{timestamp}.txt"
+            
+            output_file = output_dir / filename
+            
+            # Copy the file
+            import shutil
+            shutil.copy2(self.ised_result_path, output_file)
+            
+            # Save metadata as well
+            metadata_file = output_dir / metadata_filename
+            with open(metadata_file, 'w') as f:
+                f.write(f"iSED Trajectory Metadata\n")
+                f.write(f"========================\n")
+                f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Selected k-point: {k_val:.6f}\n")
+                f.write(f"Selected frequency: {w_val:.6f} THz\n")
+                f.write(f"Number of frames: {self.n_frames_var.get()}\n")
+                f.write(f"Rescaling factor: {self.rescale_var.get()}\n")
+                f.write(f"K-path direction: {self.direction_var.get()}\n")
+                f.write(f"BZ coverage: {self.bz_coverage_var.get()}\n")
+                f.write(f"Basis atom types: {self.basis_types_var.get() or 'All'}\n")
+                f.write(f"Trajectory file: {self.trajectory_var.get()}\n")
+            
+            messagebox.showinfo("Save Complete", 
+                               f"iSED trajectory saved as:\n{filename}\n\n"
+                               f"Metadata saved as:\n{metadata_file.name}")
+            
+        except Exception as e:
+            logger.error(f"Error saving iSED trajectory: {e}")
+            messagebox.showerror("Error", f"Failed to save iSED trajectory:\n{str(e)}")
+
+    def _save_current_plot(self):
+        """Save the current plot as an image"""
+        try:
+            if not hasattr(self, 'sed_result') or not self.sed_result:
+                messagebox.showerror("Error", "No plot data available to save")
+                return
+            
+            # Create output directory
+            output_dir = Path(self.output_dir_var.get())
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            format_type = self.image_format_var.get()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            if hasattr(self, 'sed_calculation_type'):
+                calc_type = self.sed_calculation_type.lower().replace("-", "_")
+            else:
+                calc_type = "unknown"
+            
+            # Use custom filename if provided, otherwise generate one
+            custom_name = self.custom_plot_filename_var.get().strip()
+            if custom_name:
+                # Remove extension if user provided one
+                custom_name = Path(custom_name).stem
+                base_filename = custom_name
+            else:
+                base_filename = f"psa_{calc_type}_plot_{timestamp}"
+            
+            # Get user-specified parameters
+            dpi_val = self.plot_dpi_var.get() if format_type in ['png', 'jpg'] else None
+            bbox_inches = None  # Always use default matplotlib bbox
+            
+            # Apply aspect ratio if specified
+            aspect_ratio = self.aspect_ratio_var.get().strip()
+            if aspect_ratio and aspect_ratio.lower() != "auto":
+                if aspect_ratio.lower() == "equal" or aspect_ratio == "1:1":
+                    self.sed_ax.set_aspect('equal', adjustable='box')
+                elif ":" in aspect_ratio:
+                    # Handle ratios like "4:3", "16:9"
+                    try:
+                        parts = aspect_ratio.split(":")
+                        if len(parts) == 2:
+                            width_ratio = float(parts[0])
+                            height_ratio = float(parts[1])
+                            # Calculate current data range and set aspect
+                            xlim = self.sed_ax.get_xlim()
+                            ylim = self.sed_ax.get_ylim()
+                            self.sed_ax.set_aspect(abs((xlim[1]-xlim[0])/(ylim[1]-ylim[0])) * (height_ratio/width_ratio))
+                    except (ValueError, ZeroDivisionError):
+                        logger.warning(f"Invalid aspect ratio format: {aspect_ratio}")
+                elif aspect_ratio.replace(".", "").replace("-", "").isdigit():
+                    # Handle numeric aspect ratios like "1.5", "0.75"
+                    try:
+                        aspect_val = float(aspect_ratio)
+                        self.sed_ax.set_aspect(aspect_val)
+                    except ValueError:
+                        logger.warning(f"Invalid numeric aspect ratio: {aspect_ratio}")
+                else:
+                    logger.warning(f"Unrecognized aspect ratio format: {aspect_ratio}")
+                
+                # Redraw with new aspect ratio
+                self.sed_canvas.draw()
+            
+            if format_type == "png":
+                image_file = output_dir / f"{base_filename}.png"
+                self.sed_fig.savefig(image_file, format='png', dpi=dpi_val, bbox_inches=bbox_inches)
+            elif format_type == "jpg":
+                image_file = output_dir / f"{base_filename}.jpg"
+                self.sed_fig.savefig(image_file, format='jpeg', dpi=dpi_val, bbox_inches=bbox_inches)
+            elif format_type == "svg":
+                image_file = output_dir / f"{base_filename}.svg"
+                self.sed_fig.savefig(image_file, format='svg', bbox_inches=bbox_inches)
+            elif format_type == "pdf":
+                image_file = output_dir / f"{base_filename}.pdf"
+                self.sed_fig.savefig(image_file, format='pdf', bbox_inches=bbox_inches)
+            else:
+                messagebox.showerror("Error", f"Unsupported image format: {format_type}")
+                return
+            
+            messagebox.showinfo("Save Complete", f"Plot saved as:\n{image_file.name}")
+            
+        except Exception as e:
+            logger.error(f"Error saving plot image: {e}")
+            messagebox.showerror("Error", f"Failed to save plot image:\n{str(e)}")
+
+    def _get_basis_atom_types(self):
+        """Helper method to parse basis atom types from the GUI input"""
+        if not self.basis_types_var.get().strip():
+            return None
+        try:
+            return [int(x.strip()) for x in self.basis_types_var.get().split(',')]
+        except ValueError:
+            return None
+    
+    def _apply_intensity_scaling(self, data, scale_type):
+        """Helper method to apply intensity scaling to data"""
+        if scale_type == "log":
+            return np.log10(np.maximum(data, 1e-12))
+        elif scale_type == "sqrt":
+            return np.sqrt(np.maximum(data, 0))
+        elif scale_type == "dsqrt":
+            return np.sqrt(np.sqrt(np.maximum(data, 0)))
+        else:  # linear
+            return data
+
+    def _create_labeled_scale(self, parent, label_text, variable, from_val, to_val, command=None, format_str="{:.2f}"):
+        """Helper method to create label + scale + value display combinations"""
+        ttk.Label(parent, text=label_text).pack(anchor="w")
+        
+        frame = ttk.Frame(parent)
+        frame.pack(fill="x", pady=(0,5))
+        
+        scale = ttk.Scale(frame, from_=from_val, to=to_val, variable=variable, 
+                         orient="horizontal", command=command)
+        scale.pack(side="left", fill="x", expand=True)
+        
+        # Create value label
+        value_var = tk.StringVar()
+        value_var.set(format_str.format(variable.get()))
+        variable.trace('w', lambda *args: value_var.set(format_str.format(variable.get())))
+        
+        width = 5 if ".2f" in format_str else 4
+        ttk.Label(frame, textvariable=value_var, width=width).pack(side="right")
+        
+        return frame, scale
+
+    def _on_phase_colormap_change(self):
+        """Update plot if Phase colormap is changed."""
+        if not hasattr(self, 'sed_calculation_type'):
+            return
+            
+        if self.sed_calculation_type == "K-Path":
+            # For k-path, regenerate the plot
+            self._generate_sed_plot()
+        elif self.sed_calculation_type == "K-Grid":
+            # For k-grid, regenerate the heatmap at current frequency
+            if hasattr(self, 'kgrid_freq_slider') and hasattr(self, 'kgrid_freqs'):
+                current_freq = self.kgrid_freq_slider.get()
+                freq_idx = np.argmin(np.abs(self.kgrid_freqs - current_freq))
+                self._plot_kgrid_heatmap(freq_idx)
 
 
 def main():
